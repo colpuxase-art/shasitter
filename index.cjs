@@ -1,3 +1,5 @@
+/* index.cjs — ShaSitter (PRIVATE Telegram mini-app) */
+
 const express = require("express");
 const TelegramBot = require("node-telegram-bot-api");
 const path = require("path");
@@ -7,7 +9,6 @@ const { createClient } = require("@supabase/supabase-js");
 const app = express();
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
-
 app.get("/", (req, res) => res.sendFile(path.join(__dirname, "public", "index.html")));
 
 const PORT = process.env.PORT || 3000;
@@ -16,7 +17,7 @@ const PORT = process.env.PORT || 3000;
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE;
-const WEBAPP_URL = process.env.WEBAPP_URL; // ex: https://shasitter.onrender.com
+const WEBAPP_URL = process.env.WEBAPP_URL; // ex: https://xxx.onrender.com
 
 if (!BOT_TOKEN) {
   console.error("❌ BOT_TOKEN manquant");
@@ -35,16 +36,32 @@ const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE, {
 });
 
 /* ================== ADMIN ================== */
-const ADMIN_IDS = new Set([
-  6675436692, // <-- ton ID Telegram (change si besoin)
-]);
+const ADMIN_IDS = new Set([6675436692]); // <-- ton ID
 const isAdmin = (chatId) => ADMIN_IDS.has(chatId);
 
-/* ================== TELEGRAM BOT ================== */
-const bot = new TelegramBot(BOT_TOKEN, { polling: true });
+/* ================== TELEGRAM BOT ==================
+   Fix 409: stop polling proprement sur redeploy.
+   IMPORTANT: sur Render, garde 1 seule instance.
+*/
+const bot = new TelegramBot(BOT_TOKEN, {
+  polling: { interval: 300, autoStart: true, params: { timeout: 10 } },
+});
+function safeStopPolling() {
+  try {
+    bot.stopPolling();
+  } catch {}
+}
+process.on("SIGTERM", () => {
+  safeStopPolling();
+  process.exit(0);
+});
+process.on("SIGINT", () => {
+  safeStopPolling();
+  process.exit(0);
+});
 
 /* ================== Telegram initData validation (PRIVATE APP) ==================
-   On protège TOUTES les routes /api/* via initData Telegram WebApp.
+   Protège /api/* via initData Telegram WebApp.
 */
 function timingSafeEqual(a, b) {
   const aa = Buffer.from(a);
@@ -52,16 +69,13 @@ function timingSafeEqual(a, b) {
   if (aa.length !== bb.length) return false;
   return crypto.timingSafeEqual(aa, bb);
 }
-
 function parseInitData(initData) {
   const params = new URLSearchParams(initData);
   const obj = {};
   for (const [k, v] of params.entries()) obj[k] = v;
   return obj;
 }
-
 function checkTelegramInitData(initData, botToken) {
-  // https://core.telegram.org/bots/webapps#validating-data-received-via-the-web-app
   const data = parseInitData(initData);
   const hash = data.hash;
   if (!hash) return { ok: false, reason: "no_hash" };
@@ -79,7 +93,6 @@ function checkTelegramInitData(initData, botToken) {
   if (!ok) return { ok: false, reason: "bad_hash" };
   return { ok: true, data };
 }
-
 function extractUserIdFromInitData(initData) {
   try {
     const data = parseInitData(initData);
@@ -91,7 +104,6 @@ function extractUserIdFromInitData(initData) {
     return null;
   }
 }
-
 function requireAdminWebApp(req, res, next) {
   const initData = req.headers["x-telegram-initdata"];
   if (!initData) return res.status(401).json({ error: "missing_initdata" });
@@ -110,16 +122,37 @@ function requireAdminWebApp(req, res, next) {
 const ANIMALS = ["chat", "lapin", "autre"];
 const SLOTS = ["matin", "soir", "matin_soir"];
 
+function money2(n) {
+  const x = Number(n || 0);
+  if (!Number.isFinite(x)) return 0;
+  return Math.round(x * 100) / 100;
+}
+function utcTodayISO() {
+  const today = new Date();
+  const y = today.getUTCFullYear();
+  const m = String(today.getUTCMonth() + 1).padStart(2, "0");
+  const d = String(today.getUTCDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
 function daysInclusive(startDate, endDate) {
   const a = new Date(`${startDate}T00:00:00Z`);
   const b = new Date(`${endDate}T00:00:00Z`);
   const diff = Math.round((b - a) / (1000 * 60 * 60 * 24));
   return diff + 1;
 }
-function money2(n) {
-  const x = Number(n || 0);
-  if (!Number.isFinite(x)) return 0;
-  return Math.round(x * 100) / 100;
+function slotLabel(s) {
+  return s === "matin" ? "🌅 Matin" : s === "soir" ? "🌙 Soir" : "🌅🌙 Matin + soir";
+}
+function animalLabel(a) {
+  return a === "chat" ? "🐱 Chat" : a === "lapin" ? "🐰 Lapin" : "🐾 Autre";
+}
+async function answerCbq(q) {
+  try {
+    await bot.answerCallbackQuery(q.id);
+  } catch {}
+}
+function webAppUrl() {
+  return WEBAPP_URL || "https://shasitter.onrender.com";
 }
 
 /* ================== DB HELPERS ================== */
@@ -138,6 +171,16 @@ async function dbListEmployees() {
   if (error) throw error;
   return data || [];
 }
+async function dbListPetsByClient(clientId) {
+  const { data, error } = await sb
+    .from("pets")
+    .select("*")
+    .eq("client_id", clientId)
+    .order("id", { ascending: true });
+  if (error) throw error;
+  return data || [];
+}
+
 async function dbInsertPrestation(p) {
   const { data, error } = await sb.from("prestations").insert(p).select("*").single();
   if (error) throw error;
@@ -153,36 +196,32 @@ async function dbInsertEmployee(e) {
   if (error) throw error;
   return data;
 }
+async function dbInsertPet(p) {
+  const { data, error } = await sb.from("pets").insert(p).select("*").single();
+  if (error) throw error;
+  return data;
+}
 async function dbInsertBooking(b) {
   const { data, error } = await sb.from("bookings").insert(b).select("*").single();
   if (error) throw error;
   return data;
 }
 
-function utcTodayISO() {
-  const today = new Date();
-  const y = today.getUTCFullYear();
-  const m = String(today.getUTCMonth() + 1).padStart(2, "0");
-  const d = String(today.getUTCDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
-}
-
 async function dbUpcomingBookings() {
   const iso = utcTodayISO();
   const { data, error } = await sb
     .from("bookings")
-    .select(`*, clients (*), prestations (*), employees (*)`)
+    .select(`*, clients (*), prestations (*), employees (*), pets (*)`)
     .gte("end_date", iso)
     .order("start_date", { ascending: true });
   if (error) throw error;
   return data || [];
 }
-
 async function dbPastBookings() {
   const iso = utcTodayISO();
   const { data, error } = await sb
     .from("bookings")
-    .select(`*, clients (*), prestations (*), employees (*)`)
+    .select(`*, clients (*), prestations (*), employees (*), pets (*)`)
     .lt("end_date", iso)
     .order("start_date", { ascending: false });
   if (error) throw error;
@@ -197,7 +236,6 @@ app.get("/api/prestations", requireAdminWebApp, async (req, res) => {
     res.status(500).json({ error: "db_error", message: e.message });
   }
 });
-
 app.get("/api/clients", requireAdminWebApp, async (req, res) => {
   try {
     res.json(await dbListClients());
@@ -205,7 +243,6 @@ app.get("/api/clients", requireAdminWebApp, async (req, res) => {
     res.status(500).json({ error: "db_error", message: e.message });
   }
 });
-
 app.get("/api/employees", requireAdminWebApp, async (req, res) => {
   try {
     res.json(await dbListEmployees());
@@ -213,7 +250,6 @@ app.get("/api/employees", requireAdminWebApp, async (req, res) => {
     res.status(500).json({ error: "db_error", message: e.message });
   }
 });
-
 app.get("/api/bookings/upcoming", requireAdminWebApp, async (req, res) => {
   try {
     res.json(await dbUpcomingBookings());
@@ -221,7 +257,6 @@ app.get("/api/bookings/upcoming", requireAdminWebApp, async (req, res) => {
     res.status(500).json({ error: "db_error", message: e.message });
   }
 });
-
 app.get("/api/bookings/past", requireAdminWebApp, async (req, res) => {
   try {
     res.json(await dbPastBookings());
@@ -229,7 +264,6 @@ app.get("/api/bookings/past", requireAdminWebApp, async (req, res) => {
     res.status(500).json({ error: "db_error", message: e.message });
   }
 });
-
 app.get("/api/compta/summary", requireAdminWebApp, async (req, res) => {
   try {
     const { data, error } = await sb
@@ -238,7 +272,6 @@ app.get("/api/compta/summary", requireAdminWebApp, async (req, res) => {
     if (error) throw error;
 
     const bookings = data || [];
-
     const byMonth = new Map();
     const byClient = new Map();
     const byPresta = new Map();
@@ -252,7 +285,7 @@ app.get("/api/compta/summary", requireAdminWebApp, async (req, res) => {
       totalEmployee += Number(b.employee_part_chf || 0);
       totalCompany += Number(b.company_part_chf || 0);
 
-      const month = String(b.start_date || "").slice(0, 7); // YYYY-MM
+      const month = String(b.start_date || "").slice(0, 7);
       byMonth.set(month, (byMonth.get(month) || 0) + Number(b.total_chf || 0));
 
       const ckey = String(b.client_id);
@@ -294,11 +327,7 @@ app.get("/api/compta/summary", requireAdminWebApp, async (req, res) => {
   }
 });
 
-/* ================== BOT MENU /start ================== */
-function webAppUrl() {
-  return WEBAPP_URL || "https://shasitter.onrender.com";
-}
-
+/* ================== MENU /start ================== */
 function sendMainMenu(chatId) {
   if (!isAdmin(chatId)) return bot.sendMessage(chatId, "⛔ App privée ShaSitter. Accès refusé.");
 
@@ -308,26 +337,25 @@ function sendMainMenu(chatId) {
       inline_keyboard: [
         [{ text: "📊 Ouvrir l’app (dashboard)", web_app: { url: webAppUrl() } }],
         [
-          { text: "➕ Ajouter prestation", callback_data: "add_presta" },
+          { text: "➕ Ajouter prestation (catalogue)", callback_data: "add_presta" },
           { text: "👤 Ajouter client", callback_data: "add_client" },
         ],
         [
-          { text: "📅 Ajouter réservation", callback_data: "add_booking" },
+          { text: "📅 Ajouter prestation à un chat (période)", callback_data: "add_booking" },
           { text: "👩‍💼 Ajouter employé", callback_data: "add_employee" },
         ],
         [
-          { text: "⏰ Prestations à venir", callback_data: "list_upcoming" },
-          { text: "🧾 Prestations passées", callback_data: "list_past" },
+          { text: "⏰ À venir", callback_data: "list_upcoming" },
+          { text: "🧾 Passées", callback_data: "list_past" },
         ],
         [{ text: "💰 Comptabilité", callback_data: "show_compta" }],
       ],
     },
   });
 }
-
 bot.onText(/\/start/, (msg) => sendMainMenu(msg.chat.id));
 
-/* ================== WIZARDS ================== */
+/* ================== WIZARDS STATE ================== */
 const wPresta = new Map();
 const wClient = new Map();
 const wEmployee = new Map();
@@ -335,33 +363,250 @@ const wBooking = new Map();
 
 function cancelWizard(map, chatId, label) {
   map.delete(chatId);
-  bot.sendMessage(chatId, `❌ ${label} annulé.`);
+  return bot.sendMessage(chatId, `❌ ${label} annulé.`);
 }
 
-function slotButtons(prefix) {
+/* ================== BOOKING UI (Back/Cancel/Confirm) ================== */
+function bkNavRow() {
+  return [{ text: "⬅️ Retour", callback_data: "bk_back" }, { text: "❌ Annuler", callback_data: "bk_cancel" }];
+}
+function kbWrap(rows) {
+  return { reply_markup: { inline_keyboard: rows } };
+}
+function setBkState(chatId, st) {
+  wBooking.set(chatId, st);
+}
+function getBkState(chatId) {
+  return wBooking.get(chatId);
+}
+function pushStep(st, step) {
+  st.history = st.history || [];
+  st.history.push(step);
+}
+function popStep(st) {
+  st.history = st.history || [];
+  return st.history.pop();
+}
+
+async function renderBookingStep(chatId) {
+  const st = getBkState(chatId);
+  if (!st) return;
+
+  const d = st.data || {};
+  const step = st.step;
+
+  // helpers to display current selection
+  const clientName = async () => {
+    if (!d.client_id) return "—";
+    const { data, error } = await sb.from("clients").select("id,name").eq("id", d.client_id).single();
+    if (error) return `Client #${d.client_id}`;
+    return `${data.name} (#${data.id})`;
+  };
+  const petName = async () => {
+    if (!d.pet_id) return "—";
+    const { data, error } = await sb.from("pets").select("id,name,animal_type").eq("id", d.pet_id).single();
+    if (error) return `Chat #${d.pet_id}`;
+    return `${data.name} (#${data.id})`;
+  };
+  const prestaName = async () => {
+    if (!d.prestation_id) return "—";
+    const { data, error } = await sb.from("prestations").select("id,name").eq("id", d.prestation_id).single();
+    if (error) return `Prestation #${d.prestation_id}`;
+    return `${data.name} (#${data.id})`;
+  };
+
+  // STEP 1: pick client
+  if (step === "pick_client") {
+    const clients = await dbListClients();
+    if (!clients.length) {
+      wBooking.delete(chatId);
+      return bot.sendMessage(chatId, "Aucun client. Ajoute un client d’abord.");
+    }
+    const rows = clients.slice(0, 30).map((c) => [{ text: `👤 ${c.name} (#${c.id})`, callback_data: `bk_client_${c.id}` }]);
+    rows.push([{ text: "❌ Annuler", callback_data: "bk_cancel" }]);
+    return bot.sendMessage(chatId, "📅 *Nouvelle prestation (période)*\n\n1/7 — Choisis le client :", {
+      parse_mode: "Markdown",
+      ...kbWrap(rows),
+    });
+  }
+
+  // STEP 2: pick pet or create
+  if (step === "pick_pet") {
+    const pets = await dbListPetsByClient(d.client_id);
+    const rows = [];
+    rows.push([{ text: "➕ Nouveau chat (donner un nom)", callback_data: "bk_pet_new" }]);
+    for (const p of pets.slice(0, 30)) {
+      rows.push([{ text: `🐱 ${p.name} (#${p.id})`, callback_data: `bk_pet_${p.id}` }]);
+    }
+    rows.push(bkNavRow());
+    return bot.sendMessage(
+      chatId,
+      `2/7 — Choisis le chat du client :\n\nClient: *${await clientName()}*`,
+      { parse_mode: "Markdown", ...kbWrap(rows) }
+    );
+  }
+
+  // STEP 3: pick prestation
+  if (step === "pick_presta") {
+    const prestas = await dbListPrestations();
+    if (!prestas.length) {
+      wBooking.delete(chatId);
+      return bot.sendMessage(chatId, "Aucune prestation. Ajoute une prestation (catalogue) d’abord.");
+    }
+    const rows = prestas
+      .filter((p) => p.is_active !== false)
+      .slice(0, 40)
+      .map((p) => [
+        {
+          text: `🧾 ${p.name} • ${p.price_chf} CHF`,
+          callback_data: `bk_presta_${p.id}`,
+        },
+      ]);
+    rows.push(bkNavRow());
+    return bot.sendMessage(
+      chatId,
+      `3/7 — Choisis la prestation :\n\nClient: *${await clientName()}*\nChat: *${await petName()}*`,
+      { parse_mode: "Markdown", ...kbWrap(rows) }
+    );
+  }
+
+  // STEP 4: slot
+  if (step === "pick_slot") {
+    const rows = [
+      [{ text: "🌅 Matin", callback_data: "bk_slot_matin" }],
+      [{ text: "🌙 Soir", callback_data: "bk_slot_soir" }],
+      [{ text: "🌅🌙 Matin + soir", callback_data: "bk_slot_matin_soir" }],
+      bkNavRow(),
+    ];
+    return bot.sendMessage(
+      chatId,
+      `4/7 — Choisis le créneau :\n\nClient: *${await clientName()}*\nChat: *${await petName()}*\nPrestation: *${await prestaName()}*`,
+      { parse_mode: "Markdown", ...kbWrap(rows) }
+    );
+  }
+
+  // STEP 5: start_date (text)
+  if (step === "start_date") {
+    return bot.sendMessage(
+      chatId,
+      `5/7 — Envoie la *date début* (YYYY-MM-DD)\n\nClient: *${await clientName()}*\nChat: *${await petName()}*\nPrestation: *${await prestaName()}*\nCréneau: *${slotLabel(d.slot)}*`,
+      { parse_mode: "Markdown", ...kbWrap([bkNavRow()]) }
+    );
+  }
+
+  // STEP 6: end_date (text)
+  if (step === "end_date") {
+    return bot.sendMessage(
+      chatId,
+      `6/7 — Envoie la *date fin* (YYYY-MM-DD)\n\nDébut: *${d.start_date}*`,
+      { parse_mode: "Markdown", ...kbWrap([bkNavRow()]) }
+    );
+  }
+
+  // STEP 7: employee optional
+  if (step === "pick_employee") {
+    const emps = await dbListEmployees();
+    const rows = [];
+    rows.push([{ text: "Aucun employé", callback_data: "bk_emp_none" }]);
+    for (const e of emps.filter((x) => x.is_active !== false).slice(0, 30)) {
+      rows.push([{ text: `👩‍💼 ${e.name} (#${e.id})`, callback_data: `bk_emp_${e.id}` }]);
+    }
+    rows.push(bkNavRow());
+    return bot.sendMessage(chatId, "7/7 — Assigner un employé ? (optionnel)", { ...kbWrap(rows) });
+  }
+
+  // percent (text)
+  if (step === "employee_percent") {
+    const empTxt = d.employee_id ? `Employé #${d.employee_id}` : "Aucun employé";
+    return bot.sendMessage(chatId, `Pourcentage employé (0-100). (Ex: 30)\n\n${empTxt}`, {
+      ...kbWrap([bkNavRow()]),
+    });
+  }
+
+  // recap confirm
+  if (step === "recap") {
+    // compute recap totals (with slot multiplier)
+    const { data: presta, error: pErr } = await sb.from("prestations").select("*").eq("id", d.prestation_id).single();
+    if (pErr) return bot.sendMessage(chatId, `❌ Prestation introuvable: ${pErr.message}`);
+
+    const days = daysInclusive(d.start_date, d.end_date);
+    if (days < 1) return bot.sendMessage(chatId, "❌ Dates invalides (fin avant début ?)");
+
+    const slotMult = d.slot === "matin_soir" ? 2 : 1;
+    const total = money2(Number(presta.price_chf) * days * slotMult);
+
+    const empPercent = d.employee_id ? Number(d.employee_percent || 0) : 0;
+    const empPart = d.employee_id ? money2((total * empPercent) / 100) : 0;
+    const coPart = d.employee_id ? money2(total - empPart) : total;
+
+    d.days_count = days;
+    d.total_chf = total;
+    d.employee_part_chf = empPart;
+    d.company_part_chf = coPart;
+
+    setBkState(chatId, st);
+
+    const rows = [
+      [{ text: "✅ Confirmer", callback_data: "bk_confirm" }],
+      [{ text: "⬅️ Retour (modifier)", callback_data: "bk_back" }],
+      [{ text: "❌ Annuler", callback_data: "bk_cancel" }],
+    ];
+
+    const empLine = d.employee_id ? `Employé: *${empPercent}%* → *${empPart} CHF*` : `Employé: *aucun*`;
+
+    return bot.sendMessage(
+      chatId,
+      `🧾 *Récapitulatif*\n\n` +
+        `Client: *${await clientName()}*\n` +
+        `Chat: *${await petName()}*\n` +
+        `Prestation: *${presta.name}*\n` +
+        `Créneau: *${slotLabel(d.slot)}* (x${slotMult})\n` +
+        `Période: *${d.start_date} → ${d.end_date}* (*${days} jours*)\n\n` +
+        `Total: *${total} CHF*\n` +
+        `${empLine}\n` +
+        `ShaSitter: *${coPart} CHF*`,
+      { parse_mode: "Markdown", ...kbWrap(rows) }
+    );
+  }
+}
+
+/* ================== PRESTATION (catalogue) wizard simple ==================
+   (tu peux garder celui-ci ou on le refait 100% boutons après ton SQL)
+*/
+function prestaAnimalButtons() {
   return [
-    [{ text: "🌅 Matin", callback_data: `${prefix}_slot_matin` }],
-    [{ text: "🌙 Soir", callback_data: `${prefix}_slot_soir` }],
-    [{ text: "🌅🌙 Matin + soir", callback_data: `${prefix}_slot_matin_soir` }],
-    [{ text: "❌ Annuler", callback_data: `${prefix}_cancel` }],
+    [{ text: "🐱 Chat", callback_data: "presta_an_chat" }],
+    [{ text: "🐰 Lapin", callback_data: "presta_an_lapin" }],
+    [{ text: "🐾 Autre", callback_data: "presta_an_autre" }],
+    [{ text: "❌ Annuler", callback_data: "presta_cancel" }],
   ];
+}
+function visitsButtons() {
+  return [
+    [{ text: "1 visite / jour", callback_data: "presta_vis_1" }],
+    [{ text: "2 visites / jour", callback_data: "presta_vis_2" }],
+    [{ text: "⬅️ Retour", callback_data: "presta_back" }, { text: "❌ Annuler", callback_data: "presta_cancel" }],
+  ];
+}
+function durationButtons() {
+  const mins = [15, 20, 30, 45, 60, 90];
+  const rows = mins.map((m) => [{ text: `${m} min / jour`, callback_data: `presta_dur_${m}` }]);
+  rows.push([{ text: "⬅️ Retour", callback_data: "presta_back" }, { text: "❌ Annuler", callback_data: "presta_cancel" }]);
+  return rows;
 }
 
 /* ================== CALLBACKS ================== */
 bot.on("callback_query", async (q) => {
   const chatId = q?.message?.chat?.id;
   if (!chatId) return;
-
-  try {
-    await bot.answerCallbackQuery(q.id);
-  } catch {}
+  await answerCbq(q);
 
   if (!isAdmin(chatId)) return bot.sendMessage(chatId, "⛔ Accès refusé.");
 
-  // MENU
+  // MENU actions
   if (q.data === "add_presta") {
-    wPresta.set(chatId, { step: "name", data: {} });
-    return bot.sendMessage(chatId, "➕ *Nouvelle prestation*\n\n1/6 — Envoie le *nom*.", {
+    wPresta.set(chatId, { step: "name", data: {}, history: [] });
+    return bot.sendMessage(chatId, "➕ *Nouvelle prestation (catalogue)*\n\n1/6 — Envoie le *nom*.", {
       parse_mode: "Markdown",
       reply_markup: { inline_keyboard: [[{ text: "❌ Annuler", callback_data: "presta_cancel" }]] },
     });
@@ -384,30 +629,21 @@ bot.on("callback_query", async (q) => {
   }
 
   if (q.data === "add_booking") {
-    const clients = await dbListClients();
-    if (!clients.length) return bot.sendMessage(chatId, "Aucun client. Ajoute un client d’abord.");
-
-    wBooking.set(chatId, { step: "pick_client", data: {} });
-
-    const kb = clients.slice(0, 30).map((c) => [{ text: `#${c.id} ${c.name}`, callback_data: `bk_client_${c.id}` }]);
-    kb.push([{ text: "❌ Annuler", callback_data: "bk_cancel" }]);
-
-    return bot.sendMessage(chatId, "📅 *Nouvelle réservation*\n\n1/6 — Choisis le client :", {
-      parse_mode: "Markdown",
-      reply_markup: { inline_keyboard: kb },
-    });
+    wBooking.set(chatId, { step: "pick_client", data: {}, history: [] });
+    return renderBookingStep(chatId);
   }
 
   if (q.data === "list_upcoming") {
     const rows = await dbUpcomingBookings();
-    if (!rows.length) return bot.sendMessage(chatId, "⏰ Aucune réservation à venir.");
+    if (!rows.length) return bot.sendMessage(chatId, "⏰ Aucune prestation à venir.");
     const txt = rows
-      .slice(0, 25)
+      .slice(0, 30)
       .map((b) => {
         const c = b.clients?.name || "—";
         const p = b.prestations?.name || "—";
+        const pet = b.pets?.name ? ` • 🐱 ${b.pets.name}` : "";
         const emp = b.employees?.name ? ` • 👩‍💼 ${b.employees.name}` : "";
-        return `#${b.id} • ${b.start_date}→${b.end_date} • ${c} • ${p}${emp} • ${b.total_chf} CHF`;
+        return `#${b.id} • ${b.start_date}→${b.end_date} • ${c}${pet} • ${p}${emp} • ${b.total_chf} CHF`;
       })
       .join("\n");
     return bot.sendMessage(chatId, `⏰ *À venir*:\n\n${txt}`, { parse_mode: "Markdown" });
@@ -415,14 +651,15 @@ bot.on("callback_query", async (q) => {
 
   if (q.data === "list_past") {
     const rows = await dbPastBookings();
-    if (!rows.length) return bot.sendMessage(chatId, "🧾 Aucune réservation passée.");
+    if (!rows.length) return bot.sendMessage(chatId, "🧾 Aucune prestation passée.");
     const txt = rows
-      .slice(0, 25)
+      .slice(0, 30)
       .map((b) => {
         const c = b.clients?.name || "—";
         const p = b.prestations?.name || "—";
+        const pet = b.pets?.name ? ` • 🐱 ${b.pets.name}` : "";
         const emp = b.employees?.name ? ` • 👩‍💼 ${b.employees.name}` : "";
-        return `#${b.id} • ${b.start_date}→${b.end_date} • ${c} • ${p}${emp} • ${b.total_chf} CHF`;
+        return `#${b.id} • ${b.start_date}→${b.end_date} • ${c}${pet} • ${p}${emp} • ${b.total_chf} CHF`;
       })
       .join("\n");
     return bot.sendMessage(chatId, `🧾 *Passées*:\n\n${txt}`, { parse_mode: "Markdown" });
@@ -435,7 +672,6 @@ bot.on("callback_query", async (q) => {
     const totalAll = rows.reduce((a, b) => a + Number(b.total_chf || 0), 0);
     const totalEmp = rows.reduce((a, b) => a + Number(b.employee_part_chf || 0), 0);
     const totalCo = rows.reduce((a, b) => a + Number(b.company_part_chf || 0), 0);
-
     return bot.sendMessage(
       chatId,
       `💰 *Comptabilité*\n\nTotal: *${money2(totalAll)} CHF*\nEmployés: *${money2(totalEmp)} CHF*\nShaSitter: *${money2(totalCo)} CHF*`,
@@ -443,133 +679,303 @@ bot.on("callback_query", async (q) => {
     );
   }
 
-  // CANCELS
-  if (q.data === "presta_cancel") return cancelWizard(wPresta, chatId, "Prestation");
+  // Cancel buttons
   if (q.data === "client_cancel") return cancelWizard(wClient, chatId, "Client");
   if (q.data === "emp_cancel") return cancelWizard(wEmployee, chatId, "Employé");
-  if (q.data === "bk_cancel") return cancelWizard(wBooking, chatId, "Réservation");
 
-  // BOOKING FLOW
-  if (q.data?.startsWith("bk_client_")) {
-    const st = wBooking.get(chatId);
+  /* ---------- BOOKING flow buttons ---------- */
+  if (q.data === "bk_cancel") return cancelWizard(wBooking, chatId, "Prestation (période)");
+  if (q.data === "bk_back") {
+    const st = getBkState(chatId);
     if (!st) return;
-    const clientId = Number(q.data.replace("bk_client_", ""));
-    st.data.client_id = clientId;
-
-    const prestas = await dbListPrestations();
-    if (!prestas.length) {
+    const prev = popStep(st);
+    if (!prev) {
       wBooking.delete(chatId);
-      return bot.sendMessage(chatId, "Aucune prestation. Ajoute une prestation d’abord.");
+      return bot.sendMessage(chatId, "Annulé.");
     }
-
-    st.step = "pick_presta";
-    wBooking.set(chatId, st);
-
-    const kb = prestas.slice(0, 30).map((p) => [
-      { text: `#${p.id} ${p.name} (${p.animal_type})`, callback_data: `bk_presta_${p.id}` },
-    ]);
-    kb.push([{ text: "❌ Annuler", callback_data: "bk_cancel" }]);
-
-    return bot.sendMessage(chatId, "2/6 — Choisis la prestation :", { reply_markup: { inline_keyboard: kb } });
+    st.step = prev;
+    setBkState(chatId, st);
+    return renderBookingStep(chatId);
   }
 
-  if (q.data?.startsWith("bk_presta_")) {
-    const st = wBooking.get(chatId);
+  if (q.data?.startsWith("bk_client_")) {
+    const st = getBkState(chatId);
     if (!st) return;
-    const prestaId = Number(q.data.replace("bk_presta_", ""));
-    st.data.prestation_id = prestaId;
+    pushStep(st, st.step);
+    st.data.client_id = Number(q.data.replace("bk_client_", ""));
+    st.step = "pick_pet";
+    setBkState(chatId, st);
+    return renderBookingStep(chatId);
+  }
 
-    st.step = "pick_slot";
-    wBooking.set(chatId, st);
-
-    return bot.sendMessage(chatId, "3/6 — Choisis le créneau :", {
-      reply_markup: { inline_keyboard: slotButtons("bk") },
+  if (q.data === "bk_pet_new") {
+    const st = getBkState(chatId);
+    if (!st) return;
+    pushStep(st, st.step);
+    st.step = "pet_new_name";
+    setBkState(chatId, st);
+    return bot.sendMessage(chatId, "Envoie le *nom du chat* (ex: Minou).", {
+      parse_mode: "Markdown",
+      reply_markup: { inline_keyboard: [bkNavRow()] },
     });
   }
 
+  if (q.data?.startsWith("bk_pet_")) {
+    const st = getBkState(chatId);
+    if (!st) return;
+    pushStep(st, st.step);
+    st.data.pet_id = Number(q.data.replace("bk_pet_", ""));
+    st.step = "pick_presta";
+    setBkState(chatId, st);
+    return renderBookingStep(chatId);
+  }
+
+  if (q.data?.startsWith("bk_presta_")) {
+    const st = getBkState(chatId);
+    if (!st) return;
+    pushStep(st, st.step);
+    st.data.prestation_id = Number(q.data.replace("bk_presta_", ""));
+    st.step = "pick_slot";
+    setBkState(chatId, st);
+    return renderBookingStep(chatId);
+  }
+
   if (q.data?.startsWith("bk_slot_")) {
-    const st = wBooking.get(chatId);
+    const st = getBkState(chatId);
     if (!st) return;
     const slot = q.data.replace("bk_slot_", "");
     if (!SLOTS.includes(slot)) return;
-
+    pushStep(st, st.step);
     st.data.slot = slot;
     st.step = "start_date";
-    wBooking.set(chatId, st);
-
-    return bot.sendMessage(chatId, "4/6 — Envoie la date début (YYYY-MM-DD).");
+    setBkState(chatId, st);
+    return renderBookingStep(chatId);
   }
 
   if (q.data?.startsWith("bk_emp_")) {
-    const st = wBooking.get(chatId);
+    const st = getBkState(chatId);
     if (!st) return;
+
+    pushStep(st, st.step);
 
     const id = q.data.replace("bk_emp_", "");
     if (id === "none") {
       st.data.employee_id = null;
       st.data.employee_percent = 0;
-    } else {
-      st.data.employee_id = Number(id);
+      st.step = "recap";
+      setBkState(chatId, st);
+      return renderBookingStep(chatId);
     }
 
+    st.data.employee_id = Number(id);
     st.step = "employee_percent";
-    wBooking.set(chatId, st);
-    return bot.sendMessage(chatId, "6/6 — Pourcentage employé (0-100). (Ex: 30)");
+    setBkState(chatId, st);
+    return renderBookingStep(chatId);
+  }
+
+  if (q.data === "bk_confirm") {
+    const st = getBkState(chatId);
+    if (!st) return;
+    const d = st.data || {};
+
+    try {
+      // Fetch presta for price
+      const { data: presta, error: pErr } = await sb.from("prestations").select("*").eq("id", d.prestation_id).single();
+      if (pErr) throw pErr;
+
+      const days = daysInclusive(d.start_date, d.end_date);
+      if (days < 1) throw new Error("Dates invalides (fin avant début ?)");
+
+      const slotMult = d.slot === "matin_soir" ? 2 : 1;
+      const total = money2(Number(presta.price_chf) * days * slotMult);
+
+      const empPercent = d.employee_id ? Number(d.employee_percent || 0) : 0;
+      const empPart = d.employee_id ? money2((total * empPercent) / 100) : 0;
+      const coPart = d.employee_id ? money2(total - empPart) : total;
+
+      const payload = {
+        client_id: d.client_id,
+        pet_id: d.pet_id,
+        prestation_id: d.prestation_id,
+        slot: d.slot,
+        start_date: d.start_date,
+        end_date: d.end_date,
+        days_count: days,
+        total_chf: total,
+        employee_id: d.employee_id || null,
+        employee_percent: d.employee_id ? empPercent : 0,
+        employee_part_chf: empPart,
+        company_part_chf: coPart,
+        notes: "",
+        status: "confirmed",
+      };
+
+      const inserted = await dbInsertBooking(payload);
+      wBooking.delete(chatId);
+
+      return bot.sendMessage(
+        chatId,
+        `✅ *Ajout confirmé*\n\n#${inserted.id} • ${inserted.start_date}→${inserted.end_date}\nTotal: *${inserted.total_chf} CHF*`,
+        { parse_mode: "Markdown" }
+      );
+    } catch (e) {
+      wBooking.delete(chatId);
+      return bot.sendMessage(chatId, `❌ Ajout KO: ${e.message}`);
+    }
+  }
+
+  /* ---------- PRESTATION catalogue (buttons parts) ---------- */
+  if (q.data === "presta_cancel") return cancelWizard(wPresta, chatId, "Prestation (catalogue)");
+  if (q.data === "presta_back") {
+    const st = wPresta.get(chatId);
+    if (!st) return;
+    const prev = (st.history || []).pop();
+    if (!prev) return cancelWizard(wPresta, chatId, "Prestation (catalogue)");
+    st.step = prev;
+    wPresta.set(chatId, st);
+
+    if (st.step === "animal") {
+      return bot.sendMessage(chatId, "2/6 — Type animal :", { ...kbWrap(prestaAnimalButtons()) });
+    }
+    if (st.step === "visits") {
+      return bot.sendMessage(chatId, "4/6 — Visites par jour :", { ...kbWrap(visitsButtons()) });
+    }
+    if (st.step === "duration") {
+      return bot.sendMessage(chatId, "5/6 — Durée totale par jour :", { ...kbWrap(durationButtons()) });
+    }
+    return;
+  }
+
+  if (q.data?.startsWith("presta_an_")) {
+    const st = wPresta.get(chatId);
+    if (!st) return;
+    const a = q.data.replace("presta_an_", "");
+    if (!ANIMALS.includes(a)) return;
+    st.history = st.history || [];
+    st.history.push(st.step);
+    st.data.animal_type = a;
+    st.step = "price";
+    wPresta.set(chatId, st);
+    return bot.sendMessage(chatId, `3/6 — Prix CHF (ex: 15, 46, 55)\n\nAnimal: ${animalLabel(a)}`);
+  }
+
+  if (q.data?.startsWith("presta_vis_")) {
+    const st = wPresta.get(chatId);
+    if (!st) return;
+    const v = Number(q.data.replace("presta_vis_", ""));
+    if (![1, 2].includes(v)) return;
+    st.history = st.history || [];
+    st.history.push(st.step);
+    st.data.visits_per_day = v;
+    st.step = "duration";
+    wPresta.set(chatId, st);
+    return bot.sendMessage(chatId, "5/6 — Durée totale par jour :", { ...kbWrap(durationButtons()) });
+  }
+
+  if (q.data?.startsWith("presta_dur_")) {
+    const st = wPresta.get(chatId);
+    if (!st) return;
+    const m = Number(q.data.replace("presta_dur_", ""));
+    if (!Number.isFinite(m) || m <= 0) return;
+    st.history = st.history || [];
+    st.history.push(st.step);
+    st.data.duration_min = Math.floor(m);
+    st.step = "desc";
+    wPresta.set(chatId, st);
+    return bot.sendMessage(chatId, "6/6 — Description (tu peux coller tout le texte).");
   }
 });
 
-/* ================== TEXT INPUT HANDLER (Wizards) ================== */
+/* ================== TEXT INPUT HANDLER ================== */
 bot.on("message", async (msg) => {
   const chatId = msg.chat.id;
   const text = (msg.text || "").trim();
   if (!isAdmin(chatId)) return;
   if (text.startsWith("/")) return;
 
-  // PRESTATION
+  /* ---------- BOOKING typed steps ---------- */
+  const bk = getBkState(chatId);
+  if (bk) {
+    const d = bk.data || {};
+
+    if (bk.step === "pet_new_name") {
+      if (!d.client_id) return bot.sendMessage(chatId, "❌ Client manquant.");
+      if (!text) return bot.sendMessage(chatId, "❌ Envoie un nom.");
+      try {
+        const pet = await dbInsertPet({
+          client_id: d.client_id,
+          name: text,
+          animal_type: "chat",
+          notes: "",
+          is_active: true,
+        });
+        pushStep(bk, bk.step);
+        bk.data.pet_id = pet.id;
+        bk.step = "pick_presta";
+        setBkState(chatId, bk);
+        return renderBookingStep(chatId);
+      } catch (e) {
+        wBooking.delete(chatId);
+        return bot.sendMessage(chatId, `❌ Création chat KO: ${e.message}`);
+      }
+    }
+
+    if (bk.step === "start_date") {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return bot.sendMessage(chatId, "❌ Format attendu: YYYY-MM-DD");
+      pushStep(bk, bk.step);
+      bk.data.start_date = text;
+      bk.step = "end_date";
+      setBkState(chatId, bk);
+      return renderBookingStep(chatId);
+    }
+
+    if (bk.step === "end_date") {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return bot.sendMessage(chatId, "❌ Format attendu: YYYY-MM-DD");
+      pushStep(bk, bk.step);
+      bk.data.end_date = text;
+      bk.step = "pick_employee";
+      setBkState(chatId, bk);
+      return renderBookingStep(chatId);
+    }
+
+    if (bk.step === "employee_percent") {
+      const p = Number(text);
+      if (!Number.isFinite(p) || p < 0 || p > 100) return bot.sendMessage(chatId, "❌ Mets un nombre 0-100");
+      pushStep(bk, bk.step);
+      bk.data.employee_percent = Math.floor(p);
+      bk.step = "recap";
+      setBkState(chatId, bk);
+      return renderBookingStep(chatId);
+    }
+  }
+
+  /* ---------- PRESTATION (catalogue) typed steps ---------- */
   const ps = wPresta.get(chatId);
   if (ps) {
     const d = ps.data;
 
     if (ps.step === "name") {
       d.name = text;
+      ps.history = ps.history || [];
+      ps.history.push(ps.step);
       ps.step = "animal";
       wPresta.set(chatId, ps);
-      return bot.sendMessage(chatId, "2/6 — Type animal: `chat` / `lapin` / `autre`");
+      return bot.sendMessage(chatId, "2/6 — Type animal :", { ...kbWrap(prestaAnimalButtons()) });
     }
-    if (ps.step === "animal") {
-      const a = text.toLowerCase();
-      if (!ANIMALS.includes(a)) return bot.sendMessage(chatId, "❌ Mets: chat / lapin / autre");
-      d.animal_type = a;
-      ps.step = "price";
-      wPresta.set(chatId, ps);
-      return bot.sendMessage(chatId, "3/6 — Prix CHF (ex: 15, 46, 55)");
-    }
+
     if (ps.step === "price") {
       const n = Number(text.replace(",", "."));
       if (!Number.isFinite(n) || n < 0) return bot.sendMessage(chatId, "❌ Prix invalide");
       d.price_chf = money2(n);
+      ps.history = ps.history || [];
+      ps.history.push(ps.step);
       ps.step = "visits";
       wPresta.set(chatId, ps);
-      return bot.sendMessage(chatId, "4/6 — Visites par jour (1 ou 2).");
+      return bot.sendMessage(chatId, "4/6 — Visites par jour :", { ...kbWrap(visitsButtons()) });
     }
-    if (ps.step === "visits") {
-      const v = Number(text);
-      if (![1, 2].includes(v)) return bot.sendMessage(chatId, "❌ Mets 1 ou 2");
-      d.visits_per_day = v;
-      ps.step = "duration";
-      wPresta.set(chatId, ps);
-      return bot.sendMessage(chatId, "5/6 — Durée totale par jour en minutes (ex: 15, 30, 60, 90).");
-    }
-    if (ps.step === "duration") {
-      const m = Number(text);
-      if (!Number.isFinite(m) || m < 0) return bot.sendMessage(chatId, "❌ Durée invalide");
-      d.duration_min = Math.floor(m);
-      ps.step = "desc";
-      wPresta.set(chatId, ps);
-      return bot.sendMessage(chatId, "6/6 — Description (tu peux coller tout le texte).");
-    }
+
     if (ps.step === "desc") {
-      d.description = text;
+      d.description = text || "";
       d.image_url = "";
       d.is_active = true;
 
@@ -584,11 +990,10 @@ bot.on("message", async (msg) => {
     }
   }
 
-  // CLIENT
+  /* ---------- CLIENT wizard ---------- */
   const cs = wClient.get(chatId);
   if (cs) {
     const d = cs.data;
-
     if (cs.step === "name") {
       d.name = text;
       cs.step = "phone";
@@ -610,11 +1015,10 @@ bot.on("message", async (msg) => {
     if (cs.step === "notes") {
       d.notes = text === "-" ? "" : text;
       d.is_active = true;
-
       try {
         const inserted = await dbInsertClient(d);
         wClient.delete(chatId);
-        return bot.sendMessage(chatId, `✅ Client ajouté: #${inserted.id} — ${inserted.name}`);
+        return bot.sendMessage(chatId, `✅ Client ajouté: #${inserted.id} — ${inserted.name}\n\n💡 Tu pourras ajouter un chat lors de la création d’une prestation (période).`);
       } catch (e) {
         wClient.delete(chatId);
         return bot.sendMessage(chatId, `❌ Ajout client KO: ${e.message}`);
@@ -622,11 +1026,10 @@ bot.on("message", async (msg) => {
     }
   }
 
-  // EMPLOYEE
+  /* ---------- EMPLOYEE wizard ---------- */
   const es = wEmployee.get(chatId);
   if (es) {
     const d = es.data;
-
     if (es.step === "name") {
       d.name = text;
       es.step = "phone";
@@ -644,7 +1047,6 @@ bot.on("message", async (msg) => {
       if (!Number.isFinite(p) || p < 0 || p > 100) return bot.sendMessage(chatId, "❌ Mets un nombre 0-100");
       d.default_percent = Math.floor(p);
       d.is_active = true;
-
       try {
         const inserted = await dbInsertEmployee(d);
         wEmployee.delete(chatId);
@@ -655,86 +1057,7 @@ bot.on("message", async (msg) => {
       }
     }
   }
-
-  // BOOKING
-  const bs = wBooking.get(chatId);
-  if (bs) {
-    const d = bs.data;
-
-    if (bs.step === "start_date") {
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return bot.sendMessage(chatId, "❌ Format attendu: YYYY-MM-DD");
-      d.start_date = text;
-      bs.step = "end_date";
-      wBooking.set(chatId, bs);
-      return bot.sendMessage(chatId, "5/6 — Envoie la date fin (YYYY-MM-DD).");
-    }
-
-    if (bs.step === "end_date") {
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return bot.sendMessage(chatId, "❌ Format attendu: YYYY-MM-DD");
-      d.end_date = text;
-
-      const emps = await dbListEmployees();
-      bs.step = "pick_employee";
-      wBooking.set(chatId, bs);
-
-      const kb = emps.slice(0, 20).map((e) => [{ text: `#${e.id} ${e.name}`, callback_data: `bk_emp_${e.id}` }]);
-      kb.unshift([{ text: "Aucun employé", callback_data: "bk_emp_none" }]);
-      kb.push([{ text: "❌ Annuler", callback_data: "bk_cancel" }]);
-
-      return bot.sendMessage(chatId, "6/6 — Assigner un employé ? (optionnel)", { reply_markup: { inline_keyboard: kb } });
-    }
-
-    if (bs.step === "employee_percent") {
-      const p = Number(text);
-      if (!Number.isFinite(p) || p < 0 || p > 100) return bot.sendMessage(chatId, "❌ Mets 0-100");
-      d.employee_percent = Math.floor(p);
-
-      try {
-        const { data: presta, error } = await sb.from("prestations").select("*").eq("id", d.prestation_id).single();
-        if (error) throw error;
-
-        const days = daysInclusive(d.start_date, d.end_date);
-        if (days < 1) throw new Error("Dates invalides (fin avant début ?)");
-
-        // NOTE: total simple = prix * nb jours.
-        // Si tu veux multiplier matin/soir, on pourra le faire (ex: matin_soir => x2).
-        const total = money2(Number(presta.price_chf) * days);
-
-        const empPart = d.employee_id ? money2((total * d.employee_percent) / 100) : 0;
-        const coPart = d.employee_id ? money2(total - empPart) : total;
-
-        const payload = {
-          client_id: d.client_id,
-          prestation_id: d.prestation_id,
-          slot: d.slot,
-          start_date: d.start_date,
-          end_date: d.end_date,
-          days_count: days,
-          total_chf: total,
-          employee_id: d.employee_id || null,
-          employee_percent: d.employee_id ? d.employee_percent : 0,
-          employee_part_chf: empPart,
-          company_part_chf: coPart,
-          notes: "",
-          status: "confirmed",
-        };
-
-        const inserted = await dbInsertBooking(payload);
-        wBooking.delete(chatId);
-
-        return bot.sendMessage(
-          chatId,
-          `✅ Réservation ajoutée: #${inserted.id}\n` +
-            `Dates: ${inserted.start_date} → ${inserted.end_date} (${inserted.days_count} jours)\n` +
-            `Total: ${inserted.total_chf} CHF\n` +
-            (inserted.employee_id ? `Employé: ${inserted.employee_percent}%` : `Employé: aucun`)
-        );
-      } catch (e) {
-        wBooking.delete(chatId);
-        return bot.sendMessage(chatId, `❌ Ajout booking KO: ${e.message}`);
-      }
-    }
-  }
 });
 
+/* ================== START LISTEN ================== */
 app.listen(PORT, () => console.log("ShaSitter server running on", PORT));
