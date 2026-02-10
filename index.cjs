@@ -1,7 +1,4 @@
-/* index.cjs — ShaSitter (Telegram Bot + Supabase) — aligned to YOUR SQL schema
-   - tables: clients, employees(active), prestations(active), bookings, payments
-   - "Ajouter prestation" = Ajouter réservation (période) avec packs + options (boutons)
-*/
+/* index.cjs — ShaSitter (PRIVATE Telegram mini-app) — CLEAN + PETS + MENUS + BACK + 409 FIX */
 
 const express = require("express");
 const TelegramBot = require("node-telegram-bot-api");
@@ -9,11 +6,11 @@ const path = require("path");
 const crypto = require("crypto");
 const { createClient } = require("@supabase/supabase-js");
 
-/* ================== APP ================== */
 const app = express();
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
 app.get("/", (req, res) => res.sendFile(path.join(__dirname, "public", "index.html")));
+
 const PORT = process.env.PORT || 3000;
 
 /* ================== ENV ================== */
@@ -30,22 +27,31 @@ if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE) {
   console.error("❌ SUPABASE_URL / SUPABASE_SERVICE_ROLE manquants");
   process.exit(1);
 }
+if (!WEBAPP_URL) {
+  console.error("⚠️ WEBAPP_URL manquant (Render env). Exemple: https://xxx.onrender.com");
+}
 
 const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE, {
   auth: { persistSession: false },
 });
 
 /* ================== ADMIN ================== */
-const ADMIN_IDS = new Set([6675436692]); // <-- ton ID
+const ADMIN_IDS = new Set([6675436692]); // <-- ton ID Telegram
 const isAdmin = (chatId) => ADMIN_IDS.has(chatId);
 
-/* ================== TELEGRAM BOT ==================
-   Fix 409: stop polling proprement sur redeploy.
-   IMPORTANT: sur Render -> 1 seule instance (WEB_CONCURRENCY=1)
+/* ================== TELEGRAM BOT (409 FIX) ==================
+   - IMPORTANT: sur Render => WEB_CONCURRENCY=1
+   - On force deleteWebhook(drop_pending_updates) puis startPolling
 */
-const bot = new TelegramBot(BOT_TOKEN, {
-  polling: { interval: 300, autoStart: true, params: { timeout: 10 } },
-});
+const bot = new TelegramBot(BOT_TOKEN, { polling: false });
+
+(async () => {
+  try {
+    await bot.deleteWebHook({ drop_pending_updates: true });
+  } catch {}
+  bot.startPolling({ interval: 300, params: { timeout: 10 } });
+})();
+
 function safeStopPolling() {
   try {
     bot.stopPolling();
@@ -60,7 +66,7 @@ process.on("SIGINT", () => {
   process.exit(0);
 });
 
-/* ================== Telegram WebApp initData validation (optional) ================== */
+/* ================== Telegram initData validation (PRIVATE APP) ================== */
 function timingSafeEqual(a, b) {
   const aa = Buffer.from(a);
   const bb = Buffer.from(b);
@@ -116,16 +122,17 @@ function requireAdminWebApp(req, res, next) {
   next();
 }
 
-/* ================== HELPERS ================== */
-const ANIMALS = ["chat", "lapin", "autre"];
-
-function webAppUrl() {
-  return WEBAPP_URL || "https://shasitter.onrender.com";
+/* ================== UI HELPERS ================== */
+function kb(rows) {
+  return { reply_markup: { inline_keyboard: rows } };
 }
 async function answerCbq(q) {
   try {
     await bot.answerCallbackQuery(q.id);
   } catch {}
+}
+function webAppUrl() {
+  return WEBAPP_URL || "https://shasitter.onrender.com";
 }
 function money2(n) {
   const x = Number(n || 0);
@@ -145,145 +152,135 @@ function daysInclusive(startDate, endDate) {
   const diff = Math.round((b - a) / (1000 * 60 * 60 * 24));
   return diff + 1;
 }
+const ANIMALS = ["chat", "lapin", "autre"];
+const SLOTS = ["matin", "soir", "matin_soir"];
+
+function slotLabel(s) {
+  return s === "matin" ? "🌅 Matin" : s === "soir" ? "🌙 Soir" : "🌅🌙 Matin + soir";
+}
 function animalLabel(a) {
   return a === "chat" ? "🐱 Chat" : a === "lapin" ? "🐰 Lapin" : "🐾 Autre";
 }
-function kb(rows) {
-  return { reply_markup: { inline_keyboard: rows } };
-}
-function navRow(prefix) {
-  return [
-    { text: "⬅️ Retour", callback_data: `${prefix}_back` },
-    { text: "❌ Annuler", callback_data: `${prefix}_cancel` },
-  ];
-}
-function isValidISODate(s) {
-  return /^\d{4}-\d{2}-\d{2}$/.test(s);
-}
 
-/* ================== PACKS + EXTRAS (from your images) ================== */
-/* Packs are saved in prestations (catalogue) automatically.
-   Extras are NOT in DB schema => stored in booking.notes JSON and added to total.
-*/
-const PACKS = {
-  chat: {
-    1: [
-      { key: "essentiel", name: "Essentiel", duration_min: 15, price_chf: 15 },
-      { key: "tendresse", name: "Tendresse", duration_min: 30, price_chf: 25 },
-      { key: "confort", name: "Confort", duration_min: 45, price_chf: 35 },
-      { key: "complicite", name: "Complicité", duration_min: 60, price_chf: 45 },
-      { key: "sur_mesure", name: "Sur-mesure", duration_min: 15, price_chf: null }, // prix demandé
-    ],
-    2: [
-      { key: "duo_essentiel", name: "Duo Essentiel", duration_min: 30, price_chf: 26 },
-      { key: "duo_tendresse", name: "Duo Tendresse", duration_min: 60, price_chf: 46 },
-      { key: "duo_confort", name: "Duo Confort", duration_min: 90, price_chf: 66 },
-      { key: "duo_complicite", name: "Duo Complicité", duration_min: 120, price_chf: 86 },
-      { key: "duo_sur_mesure", name: "Duo Sur-mesure", duration_min: 30, price_chf: null },
-    ],
-  },
-  // si tu veux des tarifs lapin différents, tu me donnes l'image “packs lapin” et on remplace.
-  lapin: {
-    1: [
-      { key: "essentiel", name: "Essentiel", duration_min: 15, price_chf: 15 },
-      { key: "tendresse", name: "Tendresse", duration_min: 30, price_chf: 25 },
-      { key: "confort", name: "Confort", duration_min: 45, price_chf: 35 },
-      { key: "complicite", name: "Complicité", duration_min: 60, price_chf: 45 },
-      { key: "sur_mesure", name: "Sur-mesure", duration_min: 15, price_chf: null },
-    ],
-    2: [
-      { key: "duo_essentiel", name: "Duo Essentiel", duration_min: 30, price_chf: 26 },
-      { key: "duo_tendresse", name: "Duo Tendresse", duration_min: 60, price_chf: 46 },
-      { key: "duo_confort", name: "Duo Confort", duration_min: 90, price_chf: 66 },
-      { key: "duo_complicite", name: "Duo Complicité", duration_min: 120, price_chf: 86 },
-      { key: "duo_sur_mesure", name: "Duo Sur-mesure", duration_min: 30, price_chf: null },
-    ],
-  },
-  autre: {
-    1: [{ key: "sur_mesure", name: "Sur-mesure", duration_min: 15, price_chf: null }],
-    2: [{ key: "duo_sur_mesure", name: "Duo Sur-mesure", duration_min: 30, price_chf: null }],
-  },
-};
-
-const EXTRAS = [
-  { key: "multi_cats", label: "Supplément multi-chats", type: "per_extra_cat_per_day", price_chf: 10 },
-  { key: "meds", label: "Médicaments / soins spécifiques", type: "once", price_chf: 10 },
-  { key: "water", label: "Arrosage des plantes", type: "once", price_chf: 6 },
-  { key: "mail", label: "Relever le courrier", type: "once", price_chf: 6 },
-  { key: "keys", label: "Remise des clés", type: "once", price_chf: 6 },
-  { key: "shutters", label: "Ouverture / fermeture stores", type: "once", price_chf: 6 },
-  { key: "vet", label: "Accompagnement vétérinaire", type: "once", price_chf: 30 },
-  { key: "brush", label: "Brossage régulier", type: "once", price_chf: 6 },
-  { key: "shopping", label: "Courses / fournitures", type: "once", price_chf: 12 },
-  { key: "photos", label: "Envoi photos/vidéos", type: "once", price_chf: 0 },
-  { key: "eyes", label: "Nettoyage yeux / oreilles", type: "once", price_chf: 6 },
-];
-
-/* ================== DB HELPERS (aligned to your SQL) ================== */
-async function dbListPrestationsActive() {
-  const { data, error } = await sb
-    .from("prestations")
-    .select("*")
-    .eq("active", true)
-    .order("animal_type", { ascending: true })
-    .order("visits_per_day", { ascending: true })
-    .order("price_chf", { ascending: true });
-  if (error) throw error;
-  return data || [];
-}
+/* ================== DB HELPERS ================== */
 async function dbListClients() {
   const { data, error } = await sb.from("clients").select("*").order("id", { ascending: true });
   if (error) throw error;
   return data || [];
 }
-async function dbListEmployeesActive() {
-  const { data, error } = await sb.from("employees").select("*").eq("active", true).order("id", { ascending: true });
-  if (error) throw error;
-  return data || [];
-}
-
-async function dbInsertClient(c) {
-  const { data, error } = await sb.from("clients").insert(c).select("*").single();
+async function dbGetClient(id) {
+  const { data, error } = await sb.from("clients").select("*").eq("id", id).single();
   if (error) throw error;
   return data;
 }
-async function dbInsertEmployee(e) {
-  // employees has: name, phone, default_percent, active
-  const { data, error } = await sb.from("employees").insert(e).select("*").single();
+async function dbInsertClient(payload) {
+  const { data, error } = await sb.from("clients").insert(payload).select("*").single();
   if (error) throw error;
   return data;
 }
-async function dbInsertPrestation(p) {
-  // prestations has: name, animal_type, price_chf, visits_per_day, duration_min, description, image_url, active
-  const { data, error } = await sb.from("prestations").insert(p).select("*").single();
+async function dbUpdateClient(id, payload) {
+  const { data, error } = await sb.from("clients").update(payload).eq("id", id).select("*").single();
   if (error) throw error;
   return data;
-}
-async function dbInsertBooking(b) {
-  // bookings: client_id, prestation_id, slot, start_date, end_date, days_count, total_chf,
-  // employee_id, employee_percent, employee_part_chf, company_part_chf, notes, status
-  const { data, error } = await sb.from("bookings").insert(b).select("*").single();
-  if (error) throw error;
-  return data;
-}
-async function dbSetEmployeeActive(id, active) {
-  const { error } = await sb.from("employees").update({ active }).eq("id", id);
-  if (error) throw error;
-}
-async function dbSetPrestationActive(id, active) {
-  const { error } = await sb.from("prestations").update({ active }).eq("id", id);
-  if (error) throw error;
 }
 async function dbDeleteClient(id) {
   const { error } = await sb.from("clients").delete().eq("id", id);
   if (error) throw error;
+  return true;
 }
 
+async function dbListEmployees() {
+  const { data, error } = await sb.from("employees").select("*").order("id", { ascending: true });
+  if (error) throw error;
+  return data || [];
+}
+async function dbGetEmployee(id) {
+  const { data, error } = await sb.from("employees").select("*").eq("id", id).single();
+  if (error) throw error;
+  return data;
+}
+async function dbInsertEmployee(payload) {
+  const { data, error } = await sb.from("employees").insert(payload).select("*").single();
+  if (error) throw error;
+  return data;
+}
+async function dbUpdateEmployee(id, payload) {
+  const { data, error } = await sb.from("employees").update(payload).eq("id", id).select("*").single();
+  if (error) throw error;
+  return data;
+}
+async function dbDeleteEmployee(id) {
+  const { error } = await sb.from("employees").delete().eq("id", id);
+  if (error) throw error;
+  return true;
+}
+
+async function dbListPrestations(activeOnly = false) {
+  let q = sb.from("prestations").select("*").order("id", { ascending: true });
+  if (activeOnly) q = q.eq("active", true);
+  const { data, error } = await q;
+  if (error) throw error;
+  return data || [];
+}
+async function dbGetPrestation(id) {
+  const { data, error } = await sb.from("prestations").select("*").eq("id", id).single();
+  if (error) throw error;
+  return data;
+}
+async function dbInsertPrestation(payload) {
+  const { data, error } = await sb.from("prestations").insert(payload).select("*").single();
+  if (error) throw error;
+  return data;
+}
+async function dbUpdatePrestation(id, payload) {
+  const { data, error } = await sb.from("prestations").update(payload).eq("id", id).select("*").single();
+  if (error) throw error;
+  return data;
+}
+async function dbDeletePrestation(id) {
+  const { error } = await sb.from("prestations").delete().eq("id", id);
+  if (error) throw error;
+  return true;
+}
+
+async function dbListPetsByClient(clientId, activeOnly = false) {
+  let q = sb.from("pets").select("*").eq("client_id", clientId).order("id", { ascending: true });
+  if (activeOnly) q = q.eq("active", true);
+  const { data, error } = await q;
+  if (error) throw error;
+  return data || [];
+}
+async function dbGetPet(id) {
+  const { data, error } = await sb.from("pets").select("*").eq("id", id).single();
+  if (error) throw error;
+  return data;
+}
+async function dbInsertPet(payload) {
+  const { data, error } = await sb.from("pets").insert(payload).select("*").single();
+  if (error) throw error;
+  return data;
+}
+async function dbUpdatePet(id, payload) {
+  const { data, error } = await sb.from("pets").update(payload).eq("id", id).select("*").single();
+  if (error) throw error;
+  return data;
+}
+async function dbDeletePet(id) {
+  const { error } = await sb.from("pets").delete().eq("id", id);
+  if (error) throw error;
+  return true;
+}
+
+async function dbInsertBooking(payload) {
+  const { data, error } = await sb.from("bookings").insert(payload).select("*").single();
+  if (error) throw error;
+  return data;
+}
 async function dbUpcomingBookings() {
   const iso = utcTodayISO();
   const { data, error } = await sb
     .from("bookings")
-    .select(`*, clients (*), prestations (*), employees (*)`)
+    .select(`*, clients (*), pets (*), prestations (*), employees (*)`)
     .gte("end_date", iso)
     .order("start_date", { ascending: true });
   if (error) throw error;
@@ -293,63 +290,17 @@ async function dbPastBookings() {
   const iso = utcTodayISO();
   const { data, error } = await sb
     .from("bookings")
-    .select(`*, clients (*), prestations (*), employees (*)`)
+    .select(`*, clients (*), pets (*), prestations (*), employees (*)`)
     .lt("end_date", iso)
     .order("start_date", { ascending: false });
   if (error) throw error;
   return data || [];
 }
 
-/* ================== SEED PACKS INTO prestations (once) ================== */
-async function ensurePackCatalogue() {
-  try {
-    const existing = await dbListPrestationsActive();
-    const keySet = new Set(
-      existing.map((p) => `${p.animal_type}|${p.visits_per_day}|${p.name}|${Number(p.price_chf)}|${p.duration_min}`)
-    );
-
-    const toInsert = [];
-    for (const animal of Object.keys(PACKS)) {
-      for (const visits of [1, 2]) {
-        for (const pack of PACKS[animal][visits] || []) {
-          if (pack.price_chf == null) continue; // sur-mesure => prix variable, pas seed
-          const k = `${animal}|${visits}|${pack.name}|${Number(pack.price_chf)}|${pack.duration_min}`;
-          if (!keySet.has(k)) {
-            toInsert.push({
-              name: pack.name,
-              animal_type: animal,
-              price_chf: pack.price_chf,
-              visits_per_day: visits,
-              duration_min: pack.duration_min,
-              description: "",
-              image_url: "",
-              active: true,
-            });
-          }
-        }
-      }
-    }
-
-    if (toInsert.length) {
-      // insert in batch
-      const { error } = await sb.from("prestations").insert(toInsert);
-      if (error) throw error;
-      console.log(`✅ Seed prestations: ${toInsert.length} packs inserted`);
-    } else {
-      console.log("✅ Seed prestations: already OK");
-    }
-  } catch (e) {
-    console.error("⚠️ ensurePackCatalogue failed:", e.message);
-  }
-}
-ensurePackCatalogue();
-
-/* ================== API (dashboard read-only) ================== */
+/* ================== API (Dashboard = affichage ONLY) ================== */
 app.get("/api/prestations", requireAdminWebApp, async (req, res) => {
   try {
-    const { data, error } = await sb.from("prestations").select("*").order("id", { ascending: true });
-    if (error) throw error;
-    res.json(data || []);
+    res.json(await dbListPrestations(false));
   } catch (e) {
     res.status(500).json({ error: "db_error", message: e.message });
   }
@@ -363,9 +314,7 @@ app.get("/api/clients", requireAdminWebApp, async (req, res) => {
 });
 app.get("/api/employees", requireAdminWebApp, async (req, res) => {
   try {
-    const { data, error } = await sb.from("employees").select("*").order("id", { ascending: true });
-    if (error) throw error;
-    res.json(data || []);
+    res.json(await dbListEmployees());
   } catch (e) {
     res.status(500).json({ error: "db_error", message: e.message });
   }
@@ -392,13 +341,13 @@ app.get("/api/compta/summary", requireAdminWebApp, async (req, res) => {
     if (error) throw error;
 
     const bookings = data || [];
-    let totalAll = 0;
-    let totalEmployee = 0;
-    let totalCompany = 0;
-
     const byMonth = new Map();
     const byClient = new Map();
     const byPresta = new Map();
+
+    let totalAll = 0;
+    let totalEmployee = 0;
+    let totalCompany = 0;
 
     for (const b of bookings) {
       totalAll += Number(b.total_chf || 0);
@@ -407,51 +356,61 @@ app.get("/api/compta/summary", requireAdminWebApp, async (req, res) => {
 
       const month = String(b.start_date || "").slice(0, 7);
       byMonth.set(month, (byMonth.get(month) || 0) + Number(b.total_chf || 0));
-      byClient.set(String(b.client_id), (byClient.get(String(b.client_id)) || 0) + Number(b.total_chf || 0));
-      byPresta.set(String(b.prestation_id), (byPresta.get(String(b.prestation_id)) || 0) + Number(b.total_chf || 0));
+
+      const ckey = String(b.client_id);
+      byClient.set(ckey, (byClient.get(ckey) || 0) + Number(b.total_chf || 0));
+
+      const pkey = String(b.prestation_id);
+      byPresta.set(pkey, (byPresta.get(pkey) || 0) + Number(b.total_chf || 0));
     }
 
     const clients = await dbListClients();
-    const { data: prestasAll, error: pErr } = await sb.from("prestations").select("id,name");
-    if (pErr) throw pErr;
-
+    const prestas = await dbListPrestations(false);
     const cName = new Map(clients.map((c) => [String(c.id), c.name]));
-    const pName = new Map((prestasAll || []).map((p) => [String(p.id), p.name]));
+    const pName = new Map(prestas.map((p) => [String(p.id), p.name]));
+
+    const months = [...byMonth.entries()]
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([month, total]) => ({ month, total: money2(total) }));
+
+    const topClients = [...byClient.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 20)
+      .map(([id, total]) => ({ id: Number(id), name: cName.get(id) || `Client #${id}`, total: money2(total) }));
+
+    const topPrestations = [...byPresta.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 20)
+      .map(([id, total]) => ({ id: Number(id), name: pName.get(id) || `Prestation #${id}`, total: money2(total) }));
 
     res.json({
       totalAll: money2(totalAll),
       totalEmployee: money2(totalEmployee),
       totalCompany: money2(totalCompany),
-      months: [...byMonth.entries()]
-        .sort((a, b) => a[0].localeCompare(b[0]))
-        .map(([month, total]) => ({ month, total: money2(total) })),
-      topClients: [...byClient.entries()]
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 20)
-        .map(([id, total]) => ({ id: Number(id), name: cName.get(id) || `Client #${id}`, total: money2(total) })),
-      topPrestations: [...byPresta.entries()]
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 20)
-        .map(([id, total]) => ({ id: Number(id), name: pName.get(id) || `Prestation #${id}`, total: money2(total) })),
+      months,
+      topClients,
+      topPrestations,
     });
   } catch (e) {
     res.status(500).json({ error: "db_error", message: e.message });
   }
 });
 
-/* ================== /start MAIN MENU ================== */
+/* ================== MENUS ================== */
 function sendMainMenu(chatId) {
   if (!isAdmin(chatId)) return bot.sendMessage(chatId, "⛔ App privée ShaSitter. Accès refusé.");
-  return bot.sendMessage(chatId, "🐾 *ShaSitter — Menu Admin*\nChoisis :", {
+  return bot.sendMessage(chatId, "🐱 *ShaSitter — Menu Admin*\nChoisis une catégorie 👇", {
     parse_mode: "Markdown",
     ...kb([
       [{ text: "📊 Ouvrir l’app (dashboard)", web_app: { url: webAppUrl() } }],
-      [{ text: "➕ Ajouter prestation (réservation)", callback_data: "bk_start" }],
       [
-        { text: "👥 Clients", callback_data: "m_clients" },
         { text: "👩‍💼 Employés", callback_data: "m_emps" },
+        { text: "👤 Clients", callback_data: "m_clients" },
       ],
-      [{ text: "🧾 Packs/Prestations (catalogue)", callback_data: "m_prestas" }],
+      [
+        { text: "🧾 Prestations (catalogue)", callback_data: "m_prestas" },
+        { text: "📅 Réservations (période)", callback_data: "m_book" },
+      ],
       [
         { text: "⏰ À venir", callback_data: "list_upcoming" },
         { text: "🧾 Passées", callback_data: "list_past" },
@@ -460,215 +419,217 @@ function sendMainMenu(chatId) {
     ]),
   });
 }
-bot.onText(/\/start/, (msg) => sendMainMenu(msg.chat.id));
 
-/* ================== STATES ================== */
-const wBooking = new Map(); // réservation
+function sendEmployeesMenu(chatId) {
+  return bot.sendMessage(chatId, "👩‍💼 *Employés* — Choisis :", {
+    parse_mode: "Markdown",
+    ...kb([
+      [{ text: "📋 Mes employés", callback_data: "emp_list" }],
+      [{ text: "➕ Ajouter employé", callback_data: "emp_add" }],
+      [{ text: "⬅️ Retour", callback_data: "back_main" }],
+    ]),
+  });
+}
+
+function sendClientsMenu(chatId) {
+  return bot.sendMessage(chatId, "👤 *Clients* — Choisis :", {
+    parse_mode: "Markdown",
+    ...kb([
+      [{ text: "📋 Mes clients", callback_data: "cl_list" }],
+      [{ text: "➕ Ajouter client", callback_data: "cl_add" }],
+      [{ text: "⬅️ Retour", callback_data: "back_main" }],
+    ]),
+  });
+}
+
+function sendPrestationsMenu(chatId) {
+  return bot.sendMessage(chatId, "🧾 *Prestations (catalogue)* — Choisis :", {
+    parse_mode: "Markdown",
+    ...kb([
+      [{ text: "📋 Mes prestations", callback_data: "pre_list" }],
+      [{ text: "➕ Ajouter prestation", callback_data: "pre_add" }],
+      [{ text: "⬅️ Retour", callback_data: "back_main" }],
+    ]),
+  });
+}
+
+/* ================== WIZARDS STATE ================== */
 const wClient = new Map();
 const wEmployee = new Map();
+const wPresta = new Map();
+const wPet = new Map();
+const wBooking = new Map(); // booking click-click-click
 
 function cancelWizard(map, chatId, label) {
   map.delete(chatId);
-  return bot.sendMessage(chatId, `❌ ${label} annulé.`);
+  return bot.sendMessage(chatId, `❌ ${label} annulé.`, kb([[{ text: "⬅️ Menu", callback_data: "back_main" }]]));
 }
-function setState(map, chatId, st) {
-  map.set(chatId, st);
+
+/* ================== BOOKING FLOW (click click click) ================== */
+function bkNavRow() {
+  return [{ text: "⬅️ Retour", callback_data: "bk_back" }, { text: "❌ Annuler", callback_data: "bk_cancel" }];
 }
-function getState(map, chatId) {
-  return map.get(chatId);
+function setBkState(chatId, st) {
+  wBooking.set(chatId, st);
 }
-function pushHist(st) {
+function getBkState(chatId) {
+  return wBooking.get(chatId);
+}
+function pushStep(st, step) {
   st.history = st.history || [];
-  st.history.push(st.step);
+  st.history.push(step);
 }
-function popHist(st) {
+function popStep(st) {
   st.history = st.history || [];
   return st.history.pop();
 }
 
-/* ================== BOOKING FLOW (like your photos) ================== */
-async function renderBooking(chatId) {
-  const st = getState(wBooking, chatId);
+async function renderBookingStep(chatId) {
+  const st = getBkState(chatId);
   if (!st) return;
   const d = st.data || {};
+  const step = st.step;
 
-  // small labels
-  const clientLine = d.client ? `👤 Client: *${d.client.name}* (#${d.client.id})\n` : "";
-  const animalLine = d.animal_type ? `🐾 Animal: *${animalLabel(d.animal_type)}*` + (d.animal_name ? ` — *${d.animal_name}*\n` : "\n") : "";
-  const packLine = d.pack_name ? `🧾 Pack: *${d.pack_name}* (${d.visits_per_day} visite(s)/jour)\n` : "";
-  const periodLine = d.start_date && d.end_date ? `📅 Période: *${d.start_date} → ${d.end_date}*\n` : "";
+  const clientTxt = async () => {
+    if (!d.client_id) return "—";
+    try {
+      const c = await dbGetClient(d.client_id);
+      return `${c.name} (#${c.id})`;
+    } catch {
+      return `Client #${d.client_id}`;
+    }
+  };
+  const petTxt = async () => {
+    if (!d.pet_id) return "—";
+    try {
+      const p = await dbGetPet(d.pet_id);
+      return `${p.name} (${animalLabel(p.animal_type)}) (#${p.id})`;
+    } catch {
+      return `Animal #${d.pet_id}`;
+    }
+  };
+  const prestaTxt = async () => {
+    if (!d.prestation_id) return "—";
+    try {
+      const p = await dbGetPrestation(d.prestation_id);
+      return `${p.name} — ${p.price_chf} CHF (#${p.id})`;
+    } catch {
+      return `Prestation #${d.prestation_id}`;
+    }
+  };
 
-  if (st.step === "pick_client") {
+  // 1) client: existing or new
+  if (step === "pick_client") {
     const clients = await dbListClients();
     const rows = [
-      [{ text: "➕ Nouveau client", callback_data: "bk_new_client" }],
-      ...clients.slice(0, 30).map((c) => [{ text: `👤 ${c.name} (#${c.id})`, callback_data: `bk_client_${c.id}` }]),
-      [{ text: "❌ Annuler", callback_data: "bk_cancel" }],
+      [{ text: "➕ Nouveau client", callback_data: "bk_client_new" }],
+      ...clients.slice(0, 25).map((c) => [{ text: `👤 ${c.name} (#${c.id})`, callback_data: `bk_client_${c.id}` }]),
+      [{ text: "⬅️ Retour", callback_data: "back_main" }],
     ];
-    return bot.sendMessage(chatId, "➕ *Nouvelle prestation (réservation)*\n\n1/8 — À qui ? (choisis un client)", {
-      parse_mode: "Markdown",
-      ...kb(rows),
-    });
+    return bot.sendMessage(chatId, "📅 *Nouvelle réservation*\n\n1/7 — Choisis le client :", { parse_mode: "Markdown", ...kb(rows) });
   }
 
-  if (st.step === "animal_type") {
-    return bot.sendMessage(
-      chatId,
-      `2/8 — Quel animal ?\n\n${clientLine}`,
-      {
-        parse_mode: "Markdown",
-        ...kb([
-          [{ text: "🐱 Chat", callback_data: "bk_an_chat" }],
-          [{ text: "🐰 Lapin", callback_data: "bk_an_lapin" }],
-          [{ text: "🐾 Autre", callback_data: "bk_an_autre" }],
-          navRow("bk"),
-        ]),
-      }
-    );
-  }
-
-  if (st.step === "animal_name") {
-    return bot.sendMessage(
-      chatId,
-      `3/8 — Envoie le *nom de l’animal*.\n\n${clientLine}${animalLine}`,
-      { parse_mode: "Markdown", ...kb([navRow("bk")]) }
-    );
-  }
-
-  if (st.step === "pick_visits") {
-    return bot.sendMessage(
-      chatId,
-      `4/8 — Choisis le type de pack\n\n${clientLine}${animalLine}`,
-      {
-        parse_mode: "Markdown",
-        ...kb([
-          [{ text: "🐾 Packs 1 visite / jour", callback_data: "bk_vis_1" }],
-          [{ text: "🐾 Packs 2 visites / jour", callback_data: "bk_vis_2" }],
-          navRow("bk"),
-        ]),
-      }
-    );
-  }
-
-  if (st.step === "pick_pack") {
-    const animal = d.animal_type || "chat";
-    const visits = d.visits_per_day || 1;
-    const list = (PACKS[animal] && PACKS[animal][visits]) ? PACKS[animal][visits] : [];
-
-    const rows = list.map((p) => {
-      const priceTxt = p.price_chf == null ? "Sur demande" : `${p.price_chf} CHF`;
-      const durTxt = `${p.duration_min} min`;
-      return [{ text: `${p.name} • ${durTxt} • ${priceTxt}`, callback_data: `bk_pack_${p.key}` }];
-    });
-
-    rows.push(navRow("bk"));
-    return bot.sendMessage(
-      chatId,
-      `5/8 — Choisis le pack\n\n${clientLine}${animalLine}🧾 Catégorie: *${visits} visite(s)/jour*`,
-      { parse_mode: "Markdown", ...kb(rows) }
-    );
-  }
-
-  if (st.step === "sur_mesure_price") {
-    return bot.sendMessage(
-      chatId,
-      `Prix “sur-mesure” (CHF par jour) ?\nEx: 55\n\n${clientLine}${animalLine}🧾 Pack: *${d.pack_name}*`,
-      { parse_mode: "Markdown", ...kb([navRow("bk")]) }
-    );
-  }
-
-  if (st.step === "pick_extras") {
-    const selected = new Set(d.extras || []);
-    const rows = EXTRAS.map((x) => {
-      const on = selected.has(x.key);
-      const mark = on ? "✅ " : "➕ ";
-      const priceTxt =
-        x.type === "per_extra_cat_per_day" ? `${x.price_chf} CHF / chat / jour` :
-        x.price_chf === 0 ? "Gratuit" :
-        `${x.price_chf} CHF`;
-      return [{ text: `${mark}${x.label} • ${priceTxt}`, callback_data: `bk_ex_${x.key}` }];
-    });
-
-    rows.push([{ text: "➡️ Continuer", callback_data: "bk_ex_done" }]);
-    rows.push(navRow("bk"));
-
-    return bot.sendMessage(
-      chatId,
-      `6/8 — Options supplémentaires (tu peux en sélectionner plusieurs)\n\n${clientLine}${animalLine}${packLine}`,
-      { parse_mode: "Markdown", ...kb(rows) }
-    );
-  }
-
-  if (st.step === "multi_cats_count") {
-    return bot.sendMessage(
-      chatId,
-      `Combien de *chats supplémentaires* ? (nombre)\n\nEx: 1, 2, 3\n\n${clientLine}${animalLine}${packLine}`,
-      { parse_mode: "Markdown", ...kb([navRow("bk")]) }
-    );
-  }
-
-  if (st.step === "start_date") {
-    return bot.sendMessage(
-      chatId,
-      `7/8 — Date début (YYYY-MM-DD)\n\n${clientLine}${animalLine}${packLine}`,
-      { parse_mode: "Markdown", ...kb([navRow("bk")]) }
-    );
-  }
-
-  if (st.step === "end_date") {
-    return bot.sendMessage(
-      chatId,
-      `8/8 — Date fin (YYYY-MM-DD)\n\n${clientLine}${animalLine}${packLine}Début: *${d.start_date}*\n`,
-      { parse_mode: "Markdown", ...kb([navRow("bk")]) }
-    );
-  }
-
-  if (st.step === "pick_employee") {
-    const emps = await dbListEmployeesActive();
+  // 2) pet: existing or new
+  if (step === "pick_pet") {
+    const pets = await dbListPetsByClient(d.client_id, true);
     const rows = [
-      [{ text: "🙅‍♂️ Pas d’employé", callback_data: "bk_emp_none" }],
-      ...emps.slice(0, 30).map((e) => [{ text: `👩‍💼 ${e.name} (#${e.id})`, callback_data: `bk_emp_${e.id}` }]),
-      navRow("bk"),
+      [{ text: "➕ Nouvel animal", callback_data: "bk_pet_new" }],
+      ...pets.slice(0, 25).map((p) => [{ text: `${animalLabel(p.animal_type)} ${p.name} (#${p.id})`, callback_data: `bk_pet_${p.id}` }]),
+      bkNavRow(),
     ];
     return bot.sendMessage(
       chatId,
-      `Employé ?\n\n${clientLine}${animalLine}${packLine}${periodLine}`,
+      `2/7 — Choisis l’animal :\n\nClient: *${await clientTxt()}*`,
       { parse_mode: "Markdown", ...kb(rows) }
     );
   }
 
-  if (st.step === "employee_percent") {
+  // 3) prestation
+  if (step === "pick_presta") {
+    const prestas = await dbListPrestations(true);
+    if (!prestas.length) {
+      wBooking.delete(chatId);
+      return bot.sendMessage(chatId, "Aucune prestation active dans le catalogue.");
+    }
+    const rows = prestas.slice(0, 40).map((p) => [
+      { text: `🧾 ${p.name} • ${p.price_chf} CHF`, callback_data: `bk_presta_${p.id}` },
+    ]);
+    rows.push(bkNavRow());
     return bot.sendMessage(
       chatId,
-      `Pourcentage employé (0-100). Ex: 40`,
-      { ...kb([navRow("bk")]) }
+      `3/7 — Choisis la prestation :\n\nClient: *${await clientTxt()}*\nAnimal: *${await petTxt()}*`,
+      { parse_mode: "Markdown", ...kb(rows) }
     );
   }
 
-  if (st.step === "recap") {
-    // compute totals
+  // 4) slot
+  if (step === "pick_slot") {
+    const rows = [
+      [{ text: "🌅 Matin", callback_data: "bk_slot_matin" }],
+      [{ text: "🌙 Soir", callback_data: "bk_slot_soir" }],
+      [{ text: "🌅🌙 Matin + soir", callback_data: "bk_slot_matin_soir" }],
+      bkNavRow(),
+    ];
+    return bot.sendMessage(
+      chatId,
+      `4/7 — Choisis le créneau :\n\nPrestation: *${await prestaTxt()}*`,
+      { parse_mode: "Markdown", ...kb(rows) }
+    );
+  }
+
+  // 5) start_date
+  if (step === "start_date") {
+    return bot.sendMessage(
+      chatId,
+      `5/7 — Envoie la *date début* (YYYY-MM-DD)\n\nClient: *${await clientTxt()}*\nAnimal: *${await petTxt()}*\nPrestation: *${await prestaTxt()}*\nCréneau: *${slotLabel(d.slot)}*`,
+      { parse_mode: "Markdown", ...kb([bkNavRow()]) }
+    );
+  }
+
+  // 6) end_date
+  if (step === "end_date") {
+    return bot.sendMessage(
+      chatId,
+      `6/7 — Envoie la *date fin* (YYYY-MM-DD)\n\nDébut: *${d.start_date}*`,
+      { parse_mode: "Markdown", ...kb([bkNavRow()]) }
+    );
+  }
+
+  // 7) share employee?
+  if (step === "share_employee") {
+    return bot.sendMessage(chatId, "7/7 — Partager avec un employé ?", {
+      ...kb([
+        [{ text: "✅ Oui", callback_data: "bk_share_yes" }],
+        [{ text: "❌ Non", callback_data: "bk_share_no" }],
+        bkNavRow(),
+      ]),
+    });
+  }
+
+  // pick employee
+  if (step === "pick_employee") {
+    const emps = (await dbListEmployees()).filter((e) => e.active === true);
+    const rows = [
+      [{ text: "Aucun employé", callback_data: "bk_emp_none" }],
+      ...emps.slice(0, 25).map((e) => [{ text: `👩‍💼 ${e.name} (#${e.id})`, callback_data: `bk_emp_${e.id}` }]),
+      bkNavRow(),
+    ];
+    return bot.sendMessage(chatId, "Choisis l’employé :", { ...kb(rows) });
+  }
+
+  // employee percent
+  if (step === "employee_percent") {
+    return bot.sendMessage(chatId, "Pourcentage employé (0-100). Ex: 30", { ...kb([bkNavRow()]) });
+  }
+
+  // recap
+  if (step === "recap") {
+    const presta = await dbGetPrestation(d.prestation_id);
     const days = daysInclusive(d.start_date, d.end_date);
     if (days < 1) return bot.sendMessage(chatId, "❌ Dates invalides (fin avant début ?)");
 
-    const baseTotal = money2(Number(d.price_per_day || 0) * days);
-
-    // extras
-    const extras = d.extras || [];
-    let extrasOnce = 0;
-    let multiCatsTotal = 0;
-
-    for (const k of extras) {
-      const ex = EXTRAS.find((x) => x.key === k);
-      if (!ex) continue;
-
-      if (ex.type === "once") extrasOnce += Number(ex.price_chf || 0);
-      if (ex.type === "per_extra_cat_per_day") {
-        const cnt = Number(d.multi_cats_count || 0);
-        if (cnt > 0) multiCatsTotal += Number(ex.price_chf || 0) * cnt * days;
-      }
-    }
-
-    const total = money2(baseTotal + extrasOnce + multiCatsTotal);
+    const slotMult = d.slot === "matin_soir" ? 2 : 1;
+    const total = money2(Number(presta.price_chf) * days * slotMult);
 
     const empPercent = d.employee_id ? Number(d.employee_percent || 0) : 0;
     const empPart = d.employee_id ? money2((total * empPercent) / 100) : 0;
@@ -679,18 +640,7 @@ async function renderBooking(chatId) {
     d.employee_part_chf = empPart;
     d.company_part_chf = coPart;
 
-    // friendly extras text
-    const extrasText = (() => {
-      if (!extras.length) return "—";
-      return extras
-        .map((k) => {
-          const ex = EXTRAS.find((x) => x.key === k);
-          if (!ex) return k;
-          if (ex.key === "multi_cats") return `${ex.label} (${d.multi_cats_count || 0})`;
-          return ex.label;
-        })
-        .join(", ");
-    })();
+    setBkState(chatId, st);
 
     const empLine = d.employee_id
       ? `Employé: *${empPercent}%* → *${empPart} CHF*`
@@ -699,10 +649,10 @@ async function renderBooking(chatId) {
     return bot.sendMessage(
       chatId,
       `🧾 *Récapitulatif*\n\n` +
-        `${clientLine}` +
-        `${animalLine}` +
-        `Pack: *${d.pack_name}* — *${d.price_per_day} CHF / jour*\n` +
-        `Options: *${extrasText}*\n` +
+        `Client: *${await clientTxt()}*\n` +
+        `Animal: *${await petTxt()}*\n` +
+        `Prestation: *${presta.name}*\n` +
+        `Créneau: *${slotLabel(d.slot)}* (x${slotMult})\n` +
         `Période: *${d.start_date} → ${d.end_date}* (*${days} jours*)\n\n` +
         `Total: *${total} CHF*\n` +
         `${empLine}\n` +
@@ -719,49 +669,8 @@ async function renderBooking(chatId) {
   }
 }
 
-/* ================== MENUS: Clients / Employees / Prestations ================== */
-async function renderClientsMenu(chatId) {
-  const clients = await dbListClients();
-  const rows = [
-    [{ text: "➕ Ajouter client", callback_data: "cl_add" }],
-    ...clients.slice(0, 20).map((c) => [
-      { text: `🗑️ Supprimer #${c.id} ${c.name}`, callback_data: `cl_del_${c.id}` },
-    ]),
-    [{ text: "⬅️ Retour", callback_data: "back_main" }],
-  ];
-  return bot.sendMessage(chatId, `👥 *Clients*\n(ici: suppression simple)`, { parse_mode: "Markdown", ...kb(rows) });
-}
-async function renderEmployeesMenu(chatId) {
-  const { data, error } = await sb.from("employees").select("*").order("id", { ascending: true });
-  if (error) throw error;
-  const emps = data || [];
-  const rows = [
-    [{ text: "➕ Ajouter employé", callback_data: "emp_add" }],
-    ...emps.slice(0, 25).map((e) => [
-      {
-        text: `${e.active ? "✅" : "⛔"} #${e.id} ${e.name} — bascule`,
-        callback_data: `emp_toggle_${e.id}_${e.active ? "0" : "1"}`,
-      },
-    ]),
-    [{ text: "⬅️ Retour", callback_data: "back_main" }],
-  ];
-  return bot.sendMessage(chatId, `👩‍💼 *Employés* (toggle active)`, { parse_mode: "Markdown", ...kb(rows) });
-}
-async function renderPrestationsMenu(chatId) {
-  const { data, error } = await sb.from("prestations").select("*").order("id", { ascending: true });
-  if (error) throw error;
-  const prestas = data || [];
-  const rows = [
-    [{ text: "⬅️ Retour", callback_data: "back_main" }],
-    ...prestas.slice(0, 30).map((p) => [
-      {
-        text: `${p.active ? "✅" : "⛔"} #${p.id} ${p.name} (${p.animal_type}, ${p.visits_per_day}v) — bascule`,
-        callback_data: `pr_toggle_${p.id}_${p.active ? "0" : "1"}`,
-      },
-    ]),
-  ];
-  return bot.sendMessage(chatId, `🧾 *Catalogue Packs/Prestations* (toggle active)`, { parse_mode: "Markdown", ...kb(rows) });
-}
+/* ================== /start ================== */
+bot.onText(/\/start/, (msg) => sendMainMenu(msg.chat.id));
 
 /* ================== CALLBACKS ================== */
 bot.on("callback_query", async (q) => {
@@ -771,53 +680,54 @@ bot.on("callback_query", async (q) => {
 
   if (!isAdmin(chatId)) return bot.sendMessage(chatId, "⛔ Accès refusé.");
 
-  // global nav
+  /* ----- GLOBAL NAV ----- */
   if (q.data === "back_main") return sendMainMenu(chatId);
 
-  // Lists
+  if (q.data === "m_emps") return sendEmployeesMenu(chatId);
+  if (q.data === "m_clients") return sendClientsMenu(chatId);
+  if (q.data === "m_prestas") return sendPrestationsMenu(chatId);
+
+  if (q.data === "m_book") {
+    wBooking.set(chatId, { step: "pick_client", data: {}, history: [] });
+    return renderBookingStep(chatId);
+  }
+
+  /* ----- LISTS: upcoming / past / compta ----- */
   if (q.data === "list_upcoming") {
     const rows = await dbUpcomingBookings();
-    if (!rows.length) return bot.sendMessage(chatId, "⏰ Aucune prestation à venir.");
+    if (!rows.length) return bot.sendMessage(chatId, "⏰ Aucune réservation à venir.", kb([[{ text: "⬅️ Retour", callback_data: "back_main" }]]));
     const txt = rows
       .slice(0, 30)
       .map((b) => {
-        let animal = "";
-        try {
-          const n = b.notes ? JSON.parse(b.notes) : null;
-          if (n?.animal_name) animal = ` • 🐾 ${n.animal_name}`;
-        } catch {}
         const c = b.clients?.name || "—";
+        const pet = b.pets?.name ? ` • 🐾 ${b.pets.name}` : "";
         const p = b.prestations?.name || "—";
         const emp = b.employees?.name ? ` • 👩‍💼 ${b.employees.name}` : "";
-        return `#${b.id} • ${b.start_date}→${b.end_date} • ${c}${animal} • ${p}${emp} • ${b.total_chf} CHF`;
+        return `#${b.id} • ${b.start_date}→${b.end_date} • ${c}${pet} • ${p}${emp} • ${b.total_chf} CHF`;
       })
       .join("\n");
-    return bot.sendMessage(chatId, `⏰ *À venir*:\n\n${txt}`, { parse_mode: "Markdown" });
+    return bot.sendMessage(chatId, `⏰ *À venir*:\n\n${txt}`, { parse_mode: "Markdown", ...kb([[{ text: "⬅️ Retour", callback_data: "back_main" }]]) });
   }
 
   if (q.data === "list_past") {
     const rows = await dbPastBookings();
-    if (!rows.length) return bot.sendMessage(chatId, "🧾 Aucune prestation passée.");
+    if (!rows.length) return bot.sendMessage(chatId, "🧾 Aucune réservation passée.", kb([[{ text: "⬅️ Retour", callback_data: "back_main" }]]));
     const txt = rows
       .slice(0, 30)
       .map((b) => {
-        let animal = "";
-        try {
-          const n = b.notes ? JSON.parse(b.notes) : null;
-          if (n?.animal_name) animal = ` • 🐾 ${n.animal_name}`;
-        } catch {}
         const c = b.clients?.name || "—";
+        const pet = b.pets?.name ? ` • 🐾 ${b.pets.name}` : "";
         const p = b.prestations?.name || "—";
         const emp = b.employees?.name ? ` • 👩‍💼 ${b.employees.name}` : "";
-        return `#${b.id} • ${b.start_date}→${b.end_date} • ${c}${animal} • ${p}${emp} • ${b.total_chf} CHF`;
+        return `#${b.id} • ${b.start_date}→${b.end_date} • ${c}${pet} • ${p}${emp} • ${b.total_chf} CHF`;
       })
       .join("\n");
-    return bot.sendMessage(chatId, `🧾 *Passées*:\n\n${txt}`, { parse_mode: "Markdown" });
+    return bot.sendMessage(chatId, `🧾 *Passées*:\n\n${txt}`, { parse_mode: "Markdown", ...kb([[{ text: "⬅️ Retour", callback_data: "back_main" }]]) });
   }
 
   if (q.data === "show_compta") {
     const { data, error } = await sb.from("bookings").select("total_chf,employee_part_chf,company_part_chf");
-    if (error) return bot.sendMessage(chatId, `❌ Compta: ${error.message}`);
+    if (error) return bot.sendMessage(chatId, `❌ Compta: ${error.message}`, kb([[{ text: "⬅️ Retour", callback_data: "back_main" }]]));
     const rows = data || [];
     const totalAll = rows.reduce((a, b) => a + Number(b.total_chf || 0), 0);
     const totalEmp = rows.reduce((a, b) => a + Number(b.employee_part_chf || 0), 0);
@@ -825,284 +735,170 @@ bot.on("callback_query", async (q) => {
     return bot.sendMessage(
       chatId,
       `💰 *Comptabilité*\n\nTotal: *${money2(totalAll)} CHF*\nEmployés: *${money2(totalEmp)} CHF*\nShaSitter: *${money2(totalCo)} CHF*`,
-      { parse_mode: "Markdown" }
+      { parse_mode: "Markdown", ...kb([[{ text: "⬅️ Retour", callback_data: "back_main" }]]) }
     );
   }
 
-  // Sub menus
-  if (q.data === "m_clients") return renderClientsMenu(chatId);
-  if (q.data === "m_emps") return renderEmployeesMenu(chatId);
-  if (q.data === "m_prestas") return renderPrestationsMenu(chatId);
-
-  // Employees toggle
-  if (q.data?.startsWith("emp_toggle_")) {
-    const [, , idStr, valStr] = q.data.split("_");
-    try {
-      await dbSetEmployeeActive(Number(idStr), valStr === "1");
-      return renderEmployeesMenu(chatId);
-    } catch (e) {
-      return bot.sendMessage(chatId, `❌ Toggle employé KO: ${e.message}`);
-    }
-  }
-
-  // Prestations toggle
-  if (q.data?.startsWith("pr_toggle_")) {
-    const [, , idStr, valStr] = q.data.split("_");
-    try {
-      await dbSetPrestationActive(Number(idStr), valStr === "1");
-      return renderPrestationsMenu(chatId);
-    } catch (e) {
-      return bot.sendMessage(chatId, `❌ Toggle prestation KO: ${e.message}`);
-    }
-  }
-
-  // Client add/delete
-  if (q.data === "cl_add") {
-    setState(wClient, chatId, { step: "name", data: {} });
-    return bot.sendMessage(chatId, "👤 *Nouveau client*\n\n1/4 — Envoie le *nom*.", {
-      parse_mode: "Markdown",
-      ...kb([[{ text: "❌ Annuler", callback_data: "cl_cancel" }]]),
-    });
-  }
-  if (q.data === "cl_cancel") return cancelWizard(wClient, chatId, "Client");
-
-  if (q.data?.startsWith("cl_del_")) {
-    const id = Number(q.data.replace("cl_del_", ""));
-    try {
-      await dbDeleteClient(id);
-      return bot.sendMessage(chatId, `✅ Client #${id} supprimé.`);
-    } catch (e) {
-      return bot.sendMessage(chatId, `❌ Suppression KO: ${e.message}\n(Si le client a des réservations, c’est normal: FK restrict)`);
-    }
-  }
-
-  // Employee add
-  if (q.data === "emp_add") {
-    setState(wEmployee, chatId, { step: "name", data: {} });
-    return bot.sendMessage(chatId, "👩‍💼 *Nouvel employé*\n\n1/3 — Envoie le *nom*.", {
-      parse_mode: "Markdown",
-      ...kb([[{ text: "❌ Annuler", callback_data: "emp_cancel" }]]),
-    });
-  }
-  if (q.data === "emp_cancel") return cancelWizard(wEmployee, chatId, "Employé");
-
-  /* ---------- BOOKING START ---------- */
-  if (q.data === "bk_start") {
-    setState(wBooking, chatId, { step: "pick_client", data: {}, history: [] });
-    return renderBooking(chatId);
-  }
-  if (q.data === "bk_cancel") return cancelWizard(wBooking, chatId, "Prestation (réservation)");
-
+  /* ================== BOOKING FLOW CALLBACKS ================== */
+  if (q.data === "bk_cancel") return cancelWizard(wBooking, chatId, "Réservation");
   if (q.data === "bk_back") {
-    const st = getState(wBooking, chatId);
+    const st = getBkState(chatId);
     if (!st) return;
-    const prev = popHist(st);
+    const prev = popStep(st);
     if (!prev) {
       wBooking.delete(chatId);
-      return bot.sendMessage(chatId, "Annulé.");
+      return sendMainMenu(chatId);
     }
     st.step = prev;
-    setState(wBooking, chatId, st);
-    return renderBooking(chatId);
+    setBkState(chatId, st);
+    return renderBookingStep(chatId);
   }
 
-  // Booking: pick client
-  if (q.data === "bk_new_client") {
-    const st = getState(wBooking, chatId);
-    if (!st) return;
-    pushHist(st);
-    st.step = "inline_new_client_name";
-    setState(wBooking, chatId, st);
-    return bot.sendMessage(chatId, "Nom du *nouveau client* ?", { parse_mode: "Markdown", ...kb([navRow("bk")]) });
+  if (q.data === "bk_client_new") {
+    // mini wizard client inline
+    wClient.set(chatId, { step: "bk_name", data: { _returnToBooking: true }, history: [] });
+    return bot.sendMessage(chatId, "👤 Nouveau client — Envoie le *nom* :", {
+      parse_mode: "Markdown",
+      ...kb([[{ text: "⬅️ Retour", callback_data: "bk_back" }]]),
+    });
   }
 
   if (q.data?.startsWith("bk_client_")) {
-    const id = Number(q.data.replace("bk_client_", ""));
-    const st = getState(wBooking, chatId);
+    const st = getBkState(chatId);
     if (!st) return;
-    pushHist(st);
-    const { data: c, error } = await sb.from("clients").select("*").eq("id", id).single();
-    if (error) return bot.sendMessage(chatId, `❌ Client introuvable: ${error.message}`);
-    st.data.client = c;
-    st.step = "animal_type";
-    setState(wBooking, chatId, st);
-    return renderBooking(chatId);
+    pushStep(st, st.step);
+    st.data.client_id = Number(q.data.replace("bk_client_", ""));
+    st.step = "pick_pet";
+    setBkState(chatId, st);
+    return renderBookingStep(chatId);
   }
 
-  // Booking: animal type
-  if (q.data?.startsWith("bk_an_")) {
-    const a = q.data.replace("bk_an_", "");
-    if (!ANIMALS.includes(a)) return;
-    const st = getState(wBooking, chatId);
+  if (q.data === "bk_pet_new") {
+    const st = getBkState(chatId);
     if (!st) return;
-    pushHist(st);
-    st.data.animal_type = a;
-    st.step = "animal_name";
-    setState(wBooking, chatId, st);
-    return renderBooking(chatId);
+    pushStep(st, st.step);
+    st.step = "pet_new_name";
+    setBkState(chatId, st);
+
+    return bot.sendMessage(chatId, "🐾 Nouvel animal — Envoie le *nom* (ex: Minou) :", {
+      parse_mode: "Markdown",
+      ...kb([
+        [{ text: "🐱 Chat", callback_data: "pet_new_type_chat" }],
+        [{ text: "🐰 Lapin", callback_data: "pet_new_type_lapin" }],
+        [{ text: "🐾 Autre", callback_data: "pet_new_type_autre" }],
+        bkNavRow(),
+      ]),
+    });
   }
 
-  // Booking: visits
-  if (q.data?.startsWith("bk_vis_")) {
-    const v = Number(q.data.replace("bk_vis_", ""));
-    if (![1, 2].includes(v)) return;
-    const st = getState(wBooking, chatId);
+  if (q.data?.startsWith("pet_new_type_")) {
+    const st = getBkState(chatId);
     if (!st) return;
-    pushHist(st);
-    st.data.visits_per_day = v;
-    st.step = "pick_pack";
-    setState(wBooking, chatId, st);
-    return renderBooking(chatId);
+    const t = q.data.replace("pet_new_type_", "");
+    if (!ANIMALS.includes(t)) return;
+    st.data._pet_new_type = t;
+    setBkState(chatId, st);
+    return bot.sendMessage(chatId, `OK. Type: ${animalLabel(t)}\nMaintenant envoie le *nom* de l’animal :`, {
+      parse_mode: "Markdown",
+      ...kb([bkNavRow()]),
+    });
   }
 
-  // Booking: pack selected
-  if (q.data?.startsWith("bk_pack_")) {
-    const key = q.data.replace("bk_pack_", "");
-    const st = getState(wBooking, chatId);
+  if (q.data?.startsWith("bk_pet_")) {
+    const st = getBkState(chatId);
     if (!st) return;
-
-    const animal = st.data.animal_type || "chat";
-    const visits = st.data.visits_per_day || 1;
-    const pack = (PACKS[animal] && PACKS[animal][visits] ? PACKS[animal][visits] : []).find((x) => x.key === key);
-    if (!pack) return bot.sendMessage(chatId, "❌ Pack introuvable.");
-
-    pushHist(st);
-    st.data.pack_key = pack.key;
-    st.data.pack_name = pack.name;
-    st.data.duration_min = pack.duration_min;
-
-    if (pack.price_chf == null) {
-      st.step = "sur_mesure_price";
-      setState(wBooking, chatId, st);
-      return renderBooking(chatId);
-    }
-
-    // match prestation_id from DB (seeded packs)
-    const { data: presta, error } = await sb
-      .from("prestations")
-      .select("*")
-      .eq("active", true)
-      .eq("animal_type", animal)
-      .eq("visits_per_day", visits)
-      .eq("name", pack.name)
-      .eq("duration_min", pack.duration_min)
-      .eq("price_chf", pack.price_chf)
-      .maybeSingle();
-
-    if (error) return bot.sendMessage(chatId, `❌ DB pack lookup KO: ${error.message}`);
-    if (!presta) return bot.sendMessage(chatId, "❌ Pack pas trouvé en DB. (seed?)");
-
-    st.data.prestation_id = presta.id;
-    st.data.price_per_day = Number(presta.price_chf);
-
-    st.data.extras = [];
-    st.step = "pick_extras";
-    setState(wBooking, chatId, st);
-    return renderBooking(chatId);
+    pushStep(st, st.step);
+    st.data.pet_id = Number(q.data.replace("bk_pet_", ""));
+    st.step = "pick_presta";
+    setBkState(chatId, st);
+    return renderBookingStep(chatId);
   }
 
-  // Booking: extras toggle
-  if (q.data?.startsWith("bk_ex_")) {
-    const k = q.data.replace("bk_ex_", "");
-    const st = getState(wBooking, chatId);
+  if (q.data?.startsWith("bk_presta_")) {
+    const st = getBkState(chatId);
     if (!st) return;
-    const extras = new Set(st.data.extras || []);
-    if (extras.has(k)) extras.delete(k);
-    else extras.add(k);
-    st.data.extras = [...extras];
-    setState(wBooking, chatId, st);
-
-    // if toggled multi_cats, we will ask count later at done
-    return renderBooking(chatId);
+    pushStep(st, st.step);
+    st.data.prestation_id = Number(q.data.replace("bk_presta_", ""));
+    st.step = "pick_slot";
+    setBkState(chatId, st);
+    return renderBookingStep(chatId);
   }
-  if (q.data === "bk_ex_done") {
-    const st = getState(wBooking, chatId);
+
+  if (q.data?.startsWith("bk_slot_")) {
+    const st = getBkState(chatId);
     if (!st) return;
-    pushHist(st);
-
-    const extras = st.data.extras || [];
-    if (extras.includes("multi_cats")) {
-      st.step = "multi_cats_count";
-      setState(wBooking, chatId, st);
-      return renderBooking(chatId);
-    }
-
+    const slot = q.data.replace("bk_slot_", "");
+    if (!SLOTS.includes(slot)) return;
+    pushStep(st, st.step);
+    st.data.slot = slot;
     st.step = "start_date";
-    setState(wBooking, chatId, st);
-    return renderBooking(chatId);
+    setBkState(chatId, st);
+    return renderBookingStep(chatId);
   }
 
-  // Booking: employee
-  if (q.data === "bk_emp_none") {
-    const st = getState(wBooking, chatId);
+  if (q.data === "bk_share_yes") {
+    const st = getBkState(chatId);
     if (!st) return;
-    pushHist(st);
+    pushStep(st, st.step);
+    st.step = "pick_employee";
+    setBkState(chatId, st);
+    return renderBookingStep(chatId);
+  }
+
+  if (q.data === "bk_share_no") {
+    const st = getBkState(chatId);
+    if (!st) return;
+    pushStep(st, st.step);
     st.data.employee_id = null;
     st.data.employee_percent = 0;
     st.step = "recap";
-    setState(wBooking, chatId, st);
-    return renderBooking(chatId);
-  }
-  if (q.data?.startsWith("bk_emp_")) {
-    const id = Number(q.data.replace("bk_emp_", ""));
-    const st = getState(wBooking, chatId);
-    if (!st) return;
-    pushHist(st);
-    st.data.employee_id = id;
-    st.step = "employee_percent";
-    setState(wBooking, chatId, st);
-    return renderBooking(chatId);
+    setBkState(chatId, st);
+    return renderBookingStep(chatId);
   }
 
-  // Booking: confirm
+  if (q.data?.startsWith("bk_emp_") || q.data === "bk_emp_none") {
+    const st = getBkState(chatId);
+    if (!st) return;
+
+    pushStep(st, st.step);
+
+    if (q.data === "bk_emp_none") {
+      st.data.employee_id = null;
+      st.data.employee_percent = 0;
+      st.step = "recap";
+      setBkState(chatId, st);
+      return renderBookingStep(chatId);
+    }
+
+    const id = Number(q.data.replace("bk_emp_", ""));
+    st.data.employee_id = id;
+    st.step = "employee_percent";
+    setBkState(chatId, st);
+    return renderBookingStep(chatId);
+  }
+
   if (q.data === "bk_confirm") {
-    const st = getState(wBooking, chatId);
+    const st = getBkState(chatId);
     if (!st) return;
     const d = st.data || {};
 
     try {
+      const presta = await dbGetPrestation(d.prestation_id);
       const days = daysInclusive(d.start_date, d.end_date);
-      if (days < 1) throw new Error("Dates invalides");
+      if (days < 1) throw new Error("Dates invalides (fin avant début ?)");
 
-      // slot mapping
-      // schema slot must be matin/soir/matin_soir
-      const slot = d.visits_per_day === 2 ? "matin_soir" : "matin";
-
-      // totals
-      const baseTotal = money2(Number(d.price_per_day || 0) * days);
-
-      let extrasOnce = 0;
-      let multiCatsTotal = 0;
-      for (const k of d.extras || []) {
-        const ex = EXTRAS.find((x) => x.key === k);
-        if (!ex) continue;
-        if (ex.type === "once") extrasOnce += Number(ex.price_chf || 0);
-        if (ex.type === "per_extra_cat_per_day") {
-          const cnt = Number(d.multi_cats_count || 0);
-          if (cnt > 0) multiCatsTotal += Number(ex.price_chf || 0) * cnt * days;
-        }
-      }
-
-      const total = money2(baseTotal + extrasOnce + multiCatsTotal);
+      const slotMult = d.slot === "matin_soir" ? 2 : 1;
+      const total = money2(Number(presta.price_chf) * days * slotMult);
 
       const empPercent = d.employee_id ? Number(d.employee_percent || 0) : 0;
       const empPart = d.employee_id ? money2((total * empPercent) / 100) : 0;
       const coPart = d.employee_id ? money2(total - empPart) : total;
 
-      const notesObj = {
-        animal_type: d.animal_type,
-        animal_name: d.animal_name,
-        pack_key: d.pack_key,
-        pack_name: d.pack_name,
-        visits_per_day: d.visits_per_day,
-        extras: d.extras || [],
-        multi_cats_count: Number(d.multi_cats_count || 0),
-      };
-
       const payload = {
-        client_id: d.client.id,
+        client_id: d.client_id,
+        pet_id: d.pet_id,
         prestation_id: d.prestation_id,
-        slot,
+        slot: d.slot,
         start_date: d.start_date,
         end_date: d.end_date,
         days_count: days,
@@ -1111,7 +907,7 @@ bot.on("callback_query", async (q) => {
         employee_percent: d.employee_id ? empPercent : 0,
         employee_part_chf: empPart,
         company_part_chf: coPart,
-        notes: JSON.stringify(notesObj),
+        notes: "",
         status: "confirmed",
       };
 
@@ -1120,13 +916,299 @@ bot.on("callback_query", async (q) => {
 
       return bot.sendMessage(
         chatId,
-        `✅ *Réservation ajoutée*\n\n#${inserted.id}\n${inserted.start_date} → ${inserted.end_date} (${inserted.days_count} jours)\nTotal: *${inserted.total_chf} CHF*`,
-        { parse_mode: "Markdown" }
+        `✅ *Réservation confirmée*\n\n#${inserted.id} • ${inserted.start_date}→${inserted.end_date}\nTotal: *${inserted.total_chf} CHF*`,
+        { parse_mode: "Markdown", ...kb([[{ text: "⬅️ Menu", callback_data: "back_main" }]]) }
       );
     } catch (e) {
       wBooking.delete(chatId);
-      return bot.sendMessage(chatId, `❌ Ajout KO: ${e.message}`);
+      return bot.sendMessage(chatId, `❌ Ajout KO: ${e.message}`, kb([[{ text: "⬅️ Menu", callback_data: "back_main" }]]));
     }
+  }
+
+  /* ================== EMPLOYEES MENU ================== */
+  if (q.data === "emp_list") {
+    const emps = await dbListEmployees();
+    const rows = emps.slice(0, 25).map((e) => [
+      { text: `👩‍💼 #${e.id} ${e.name} ${e.active ? "✅" : "⛔"}`, callback_data: `emp_open_${e.id}` },
+    ]);
+    rows.push([{ text: "⬅️ Retour", callback_data: "m_emps" }]);
+    return bot.sendMessage(chatId, "📋 Employés :", { ...kb(rows) });
+  }
+
+  if (q.data === "emp_add") {
+    wEmployee.set(chatId, { step: "name", data: {} });
+    return bot.sendMessage(chatId, "👩‍💼 Nouvel employé — 1/4 : Envoie le *nom*.", {
+      parse_mode: "Markdown",
+      ...kb([[{ text: "⬅️ Retour", callback_data: "m_emps" }, { text: "❌ Annuler", callback_data: "emp_cancel" }]]),
+    });
+  }
+
+  if (q.data === "emp_cancel") return cancelWizard(wEmployee, chatId, "Employé");
+
+  if (q.data?.startsWith("emp_open_")) {
+    const id = Number(q.data.replace("emp_open_", ""));
+    const e = await dbGetEmployee(id);
+    return bot.sendMessage(chatId, `👩‍💼 *${e.name}* (#${e.id})\nTel: ${e.phone || "—"}\n% défaut: ${e.default_percent}%\nActif: ${e.active ? "✅" : "⛔"}`, {
+      parse_mode: "Markdown",
+      ...kb([
+        [{ text: "✏️ Modifier", callback_data: `emp_edit_${e.id}` }],
+        [{ text: e.active ? "⛔ Désactiver" : "✅ Activer", callback_data: `emp_toggle_${e.id}` }],
+        [{ text: "🗑️ Supprimer", callback_data: `emp_del_${e.id}` }],
+        [{ text: "⬅️ Retour", callback_data: "emp_list" }],
+      ]),
+    });
+  }
+
+  if (q.data?.startsWith("emp_toggle_")) {
+    const id = Number(q.data.replace("emp_toggle_", ""));
+    const e = await dbGetEmployee(id);
+    await dbUpdateEmployee(id, { active: !e.active });
+    return bot.sendMessage(chatId, "✅ Mis à jour.", kb([[{ text: "⬅️ Retour", callback_data: `emp_open_${id}` }]]));
+  }
+
+  if (q.data?.startsWith("emp_del_")) {
+    const id = Number(q.data.replace("emp_del_", ""));
+    return bot.sendMessage(chatId, "⚠️ Confirmer suppression employé ?", {
+      ...kb([
+        [{ text: "🗑️ Oui supprimer", callback_data: `emp_del_yes_${id}` }],
+        [{ text: "⬅️ Retour", callback_data: `emp_open_${id}` }],
+      ]),
+    });
+  }
+  if (q.data?.startsWith("emp_del_yes_")) {
+    const id = Number(q.data.replace("emp_del_yes_", ""));
+    await dbDeleteEmployee(id);
+    return bot.sendMessage(chatId, "✅ Employé supprimé.", kb([[{ text: "⬅️ Retour", callback_data: "emp_list" }]]));
+  }
+
+  if (q.data?.startsWith("emp_edit_")) {
+    const id = Number(q.data.replace("emp_edit_", ""));
+    const e = await dbGetEmployee(id);
+    wEmployee.set(chatId, { step: "edit_name", data: { id, _edit: true, cur: e } });
+    return bot.sendMessage(chatId, `✏️ Modifier employé (#${id}) — Envoie le *nom* (actuel: ${e.name})`, {
+      parse_mode: "Markdown",
+      ...kb([[{ text: "⬅️ Retour", callback_data: `emp_open_${id}` }]]),
+    });
+  }
+
+  /* ================== CLIENTS MENU (avec Pets) ================== */
+  if (q.data === "cl_list") {
+    const clients = await dbListClients();
+    const rows = clients.slice(0, 25).map((c) => [{ text: `👤 #${c.id} ${c.name}`, callback_data: `cl_open_${c.id}` }]);
+    rows.push([{ text: "⬅️ Retour", callback_data: "m_clients" }]);
+    return bot.sendMessage(chatId, "📋 Clients :", { ...kb(rows) });
+  }
+
+  if (q.data === "cl_add") {
+    wClient.set(chatId, { step: "name", data: {} });
+    return bot.sendMessage(chatId, "👤 Nouveau client — 1/4 : Envoie le *nom*.", {
+      parse_mode: "Markdown",
+      ...kb([[{ text: "⬅️ Retour", callback_data: "m_clients" }, { text: "❌ Annuler", callback_data: "cl_cancel" }]]),
+    });
+  }
+
+  if (q.data === "cl_cancel") return cancelWizard(wClient, chatId, "Client");
+
+  if (q.data?.startsWith("cl_open_")) {
+    const id = Number(q.data.replace("cl_open_", ""));
+    const c = await dbGetClient(id);
+    return bot.sendMessage(chatId, `👤 *${c.name}* (#${c.id})\nTel: ${c.phone || "—"}\nAdresse: ${c.address || "—"}`, {
+      parse_mode: "Markdown",
+      ...kb([
+        [{ text: "🐾 Animaux", callback_data: `pet_list_${c.id}` }],
+        [{ text: "✏️ Modifier", callback_data: `cl_edit_${c.id}` }],
+        [{ text: "🗑️ Supprimer", callback_data: `cl_del_${c.id}` }],
+        [{ text: "⬅️ Retour", callback_data: "cl_list" }],
+      ]),
+    });
+  }
+
+  if (q.data?.startsWith("cl_del_")) {
+    const id = Number(q.data.replace("cl_del_", ""));
+    return bot.sendMessage(chatId, "⚠️ Confirmer suppression client ?", {
+      ...kb([
+        [{ text: "🗑️ Oui supprimer", callback_data: `cl_del_yes_${id}` }],
+        [{ text: "⬅️ Retour", callback_data: `cl_open_${id}` }],
+      ]),
+    });
+  }
+  if (q.data?.startsWith("cl_del_yes_")) {
+    const id = Number(q.data.replace("cl_del_yes_", ""));
+    await dbDeleteClient(id);
+    return bot.sendMessage(chatId, "✅ Client supprimé.", kb([[{ text: "⬅️ Retour", callback_data: "cl_list" }]]));
+  }
+
+  if (q.data?.startsWith("cl_edit_")) {
+    const id = Number(q.data.replace("cl_edit_", ""));
+    const c = await dbGetClient(id);
+    wClient.set(chatId, { step: "edit_name", data: { id, _edit: true, cur: c } });
+    return bot.sendMessage(chatId, `✏️ Modifier client (#${id}) — Envoie le *nom* (actuel: ${c.name})`, {
+      parse_mode: "Markdown",
+      ...kb([[{ text: "⬅️ Retour", callback_data: `cl_open_${id}` }]]),
+    });
+  }
+
+  /* ----- PETS (animaux) ----- */
+  if (q.data?.startsWith("pet_list_")) {
+    const clientId = Number(q.data.replace("pet_list_", ""));
+    const c = await dbGetClient(clientId);
+    const pets = await dbListPetsByClient(clientId, false);
+
+    const rows = [
+      [{ text: "➕ Ajouter un animal", callback_data: `pet_add_${clientId}` }],
+      ...pets.slice(0, 25).map((p) => [
+        { text: `${animalLabel(p.animal_type)} ${p.name} ${p.active ? "✅" : "⛔"} (#${p.id})`, callback_data: `pet_open_${p.id}` },
+      ]),
+      [{ text: "⬅️ Retour", callback_data: `cl_open_${clientId}` }],
+    ];
+
+    return bot.sendMessage(chatId, `🐾 Animaux de *${c.name}* :`, { parse_mode: "Markdown", ...kb(rows) });
+  }
+
+  if (q.data?.startsWith("pet_add_")) {
+    const clientId = Number(q.data.replace("pet_add_", ""));
+    wPet.set(chatId, { step: "type", data: { client_id: clientId } });
+    return bot.sendMessage(chatId, "🐾 Nouvel animal — 1/3 : Choisis le type :", {
+      parse_mode: "Markdown",
+      ...kb([
+        [{ text: "🐱 Chat", callback_data: "pet_type_chat" }],
+        [{ text: "🐰 Lapin", callback_data: "pet_type_lapin" }],
+        [{ text: "🐾 Autre", callback_data: "pet_type_autre" }],
+        [{ text: "⬅️ Retour", callback_data: `pet_list_${clientId}` }, { text: "❌ Annuler", callback_data: "pet_cancel" }],
+      ]),
+    });
+  }
+
+  if (q.data === "pet_cancel") return cancelWizard(wPet, chatId, "Animal");
+
+  if (q.data?.startsWith("pet_type_")) {
+    const st = wPet.get(chatId);
+    if (!st) return;
+    const t = q.data.replace("pet_type_", "");
+    if (!ANIMALS.includes(t)) return;
+    st.data.animal_type = t;
+    st.step = "name";
+    wPet.set(chatId, st);
+    return bot.sendMessage(chatId, `2/3 — Envoie le *nom* de l’animal.\nType: ${animalLabel(t)}`, { parse_mode: "Markdown" });
+  }
+
+  if (q.data?.startsWith("pet_open_")) {
+    const petId = Number(q.data.replace("pet_open_", ""));
+    const p = await dbGetPet(petId);
+    return bot.sendMessage(chatId, `🐾 *${p.name}* (#${p.id})\nType: ${animalLabel(p.animal_type)}\nActif: ${p.active ? "✅" : "⛔"}`, {
+      parse_mode: "Markdown",
+      ...kb([
+        [{ text: "✏️ Modifier", callback_data: `pet_edit_${p.id}` }],
+        [{ text: p.active ? "⛔ Désactiver" : "✅ Activer", callback_data: `pet_toggle_${p.id}` }],
+        [{ text: "🗑️ Supprimer", callback_data: `pet_del_${p.id}` }],
+        [{ text: "⬅️ Retour", callback_data: `pet_list_${p.client_id}` }],
+      ]),
+    });
+  }
+
+  if (q.data?.startsWith("pet_toggle_")) {
+    const petId = Number(q.data.replace("pet_toggle_", ""));
+    const p = await dbGetPet(petId);
+    await dbUpdatePet(petId, { active: !p.active });
+    return bot.sendMessage(chatId, "✅ Mis à jour.", kb([[{ text: "⬅️ Retour", callback_data: `pet_open_${petId}` }]]));
+  }
+
+  if (q.data?.startsWith("pet_del_")) {
+    const petId = Number(q.data.replace("pet_del_", ""));
+    const p = await dbGetPet(petId);
+    return bot.sendMessage(chatId, "⚠️ Confirmer suppression animal ?", {
+      ...kb([
+        [{ text: "🗑️ Oui supprimer", callback_data: `pet_del_yes_${petId}` }],
+        [{ text: "⬅️ Retour", callback_data: `pet_open_${petId}` }],
+        [{ text: "⬅️ Liste animaux", callback_data: `pet_list_${p.client_id}` }],
+      ]),
+    });
+  }
+  if (q.data?.startsWith("pet_del_yes_")) {
+    const petId = Number(q.data.replace("pet_del_yes_", ""));
+    const p = await dbGetPet(petId);
+    await dbDeletePet(petId);
+    return bot.sendMessage(chatId, "✅ Animal supprimé.", kb([[{ text: "⬅️ Retour", callback_data: `pet_list_${p.client_id}` }]]));
+  }
+
+  if (q.data?.startsWith("pet_edit_")) {
+    const petId = Number(q.data.replace("pet_edit_", ""));
+    const p = await dbGetPet(petId);
+    wPet.set(chatId, { step: "edit_name", data: { id: petId, _edit: true, cur: p } });
+    return bot.sendMessage(chatId, `✏️ Modifier animal (#${petId}) — Envoie le *nom* (actuel: ${p.name})`, {
+      parse_mode: "Markdown",
+      ...kb([[{ text: "⬅️ Retour", callback_data: `pet_open_${petId}` }]]),
+    });
+  }
+
+  /* ================== PRESTATIONS MENU ================== */
+  if (q.data === "pre_list") {
+    const prestas = await dbListPrestations(false);
+    const rows = prestas.slice(0, 25).map((p) => [
+      { text: `🧾 #${p.id} ${p.name} ${p.active ? "✅" : "⛔"} • ${p.price_chf} CHF`, callback_data: `pre_open_${p.id}` },
+    ]);
+    rows.push([{ text: "⬅️ Retour", callback_data: "m_prestas" }]);
+    return bot.sendMessage(chatId, "📋 Prestations :", { ...kb(rows) });
+  }
+
+  if (q.data === "pre_add") {
+    wPresta.set(chatId, { step: "name", data: {} });
+    return bot.sendMessage(chatId, "🧾 Nouvelle prestation — 1/6 : Envoie le *nom*.", {
+      parse_mode: "Markdown",
+      ...kb([[{ text: "⬅️ Retour", callback_data: "m_prestas" }, { text: "❌ Annuler", callback_data: "pre_cancel" }]]),
+    });
+  }
+
+  if (q.data === "pre_cancel") return cancelWizard(wPresta, chatId, "Prestation");
+
+  if (q.data?.startsWith("pre_open_")) {
+    const id = Number(q.data.replace("pre_open_", ""));
+    const p = await dbGetPrestation(id);
+    return bot.sendMessage(
+      chatId,
+      `🧾 *${p.name}* (#${p.id})\nAnimal: ${animalLabel(p.animal_type)}\nPrix: ${p.price_chf} CHF\nVisites/j: ${p.visits_per_day}\nDurée: ${p.duration_min} min\nActif: ${p.active ? "✅" : "⛔"}`,
+      {
+        parse_mode: "Markdown",
+        ...kb([
+          [{ text: "✏️ Modifier", callback_data: `pre_edit_${p.id}` }],
+          [{ text: p.active ? "⛔ Désactiver" : "✅ Activer", callback_data: `pre_toggle_${p.id}` }],
+          [{ text: "🗑️ Supprimer", callback_data: `pre_del_${p.id}` }],
+          [{ text: "⬅️ Retour", callback_data: "pre_list" }],
+        ]),
+      }
+    );
+  }
+
+  if (q.data?.startsWith("pre_toggle_")) {
+    const id = Number(q.data.replace("pre_toggle_", ""));
+    const p = await dbGetPrestation(id);
+    await dbUpdatePrestation(id, { active: !p.active });
+    return bot.sendMessage(chatId, "✅ Mis à jour.", kb([[{ text: "⬅️ Retour", callback_data: `pre_open_${id}` }]]));
+  }
+
+  if (q.data?.startsWith("pre_del_")) {
+    const id = Number(q.data.replace("pre_del_", ""));
+    return bot.sendMessage(chatId, "⚠️ Confirmer suppression prestation ?", {
+      ...kb([
+        [{ text: "🗑️ Oui supprimer", callback_data: `pre_del_yes_${id}` }],
+        [{ text: "⬅️ Retour", callback_data: `pre_open_${id}` }],
+      ]),
+    });
+  }
+  if (q.data?.startsWith("pre_del_yes_")) {
+    const id = Number(q.data.replace("pre_del_yes_", ""));
+    await dbDeletePrestation(id);
+    return bot.sendMessage(chatId, "✅ Prestation supprimée.", kb([[{ text: "⬅️ Retour", callback_data: "pre_list" }]]));
+  }
+
+  if (q.data?.startsWith("pre_edit_")) {
+    const id = Number(q.data.replace("pre_edit_", ""));
+    const p = await dbGetPrestation(id);
+    wPresta.set(chatId, { step: "edit_name", data: { id, _edit: true, cur: p } });
+    return bot.sendMessage(chatId, `✏️ Modifier prestation (#${id}) — Envoie le *nom* (actuel: ${p.name})`, {
+      parse_mode: "Markdown",
+      ...kb([[{ text: "⬅️ Retour", callback_data: `pre_open_${id}` }]]),
+    });
   }
 });
 
@@ -1135,216 +1217,410 @@ bot.on("message", async (msg) => {
   const chatId = msg.chat.id;
   const text = (msg.text || "").trim();
   if (!isAdmin(chatId)) return;
-  if (!text || text.startsWith("/")) return;
+  if (text.startsWith("/")) return;
 
-  /* ---------- BOOKING typed steps ---------- */
-  const bk = getState(wBooking, chatId);
+  /* ================== BOOKING typed steps ================== */
+  const bk = getBkState(chatId);
   if (bk) {
     const d = bk.data || {};
 
-    if (bk.step === "inline_new_client_name") {
-      if (!text) return bot.sendMessage(chatId, "❌ Envoie un nom.");
-      pushHist(bk);
-      bk.data._newClient = { name: text };
-      bk.step = "inline_new_client_phone";
-      setState(wBooking, chatId, bk);
-      return bot.sendMessage(chatId, "Téléphone ?", { ...kb([navRow("bk")]) });
-    }
-    if (bk.step === "inline_new_client_phone") {
-      pushHist(bk);
-      bk.data._newClient.phone = text;
-      bk.step = "inline_new_client_address";
-      setState(wBooking, chatId, bk);
-      return bot.sendMessage(chatId, "Adresse ?", { ...kb([navRow("bk")]) });
-    }
-    if (bk.step === "inline_new_client_address") {
-      pushHist(bk);
-      bk.data._newClient.address = text;
-      bk.step = "inline_new_client_notes";
-      setState(wBooking, chatId, bk);
-      return bot.sendMessage(chatId, "Notes (ou '-') ?", { ...kb([navRow("bk")]) });
-    }
-    if (bk.step === "inline_new_client_notes") {
+    // pet_new_name typed (after type selection)
+    if (bk.step === "pet_new_name") {
+      if (!d.client_id) return bot.sendMessage(chatId, "❌ Client manquant.");
+      const name = text;
+      if (!name) return bot.sendMessage(chatId, "❌ Envoie un nom.");
+      const type = d._pet_new_type || "chat";
+
       try {
-        pushHist(bk);
-        bk.data._newClient.notes = text === "-" ? "" : text;
-
-        const c = await dbInsertClient({
-          name: bk.data._newClient.name,
-          phone: bk.data._newClient.phone || "",
-          address: bk.data._newClient.address || "",
-          notes: bk.data._newClient.notes || "",
-        });
-
-        bk.data.client = c;
-        delete bk.data._newClient;
-
-        bk.step = "animal_type";
-        setState(wBooking, chatId, bk);
-        return renderBooking(chatId);
-      } catch (e) {
-        wBooking.delete(chatId);
-        return bot.sendMessage(chatId, `❌ Création client KO: ${e.message}`);
-      }
-    }
-
-    if (bk.step === "animal_name") {
-      if (!text) return bot.sendMessage(chatId, "❌ Envoie un nom.");
-      pushHist(bk);
-      bk.data.animal_name = text;
-      bk.step = "pick_visits";
-      setState(wBooking, chatId, bk);
-      return renderBooking(chatId);
-    }
-
-    if (bk.step === "sur_mesure_price") {
-      const n = Number(text.replace(",", "."));
-      if (!Number.isFinite(n) || n <= 0) return bot.sendMessage(chatId, "❌ Prix invalide. Ex: 55");
-
-      // create a prestation row for this custom price (kept active)
-      try {
-        const animal = bk.data.animal_type || "chat";
-        const visits = bk.data.visits_per_day || 1;
-        const packName = bk.data.pack_name || "Sur-mesure";
-
-        const presta = await dbInsertPrestation({
-          name: `${packName} (${money2(n)} CHF)`,
-          animal_type: animal,
-          price_chf: money2(n),
-          visits_per_day: visits,
-          duration_min: Number(bk.data.duration_min || 15),
-          description: "Prix sur demande (créé via bot)",
-          image_url: "",
+        const pet = await dbInsertPet({
+          client_id: d.client_id,
+          name,
+          animal_type: type,
+          notes: "",
           active: true,
         });
-
-        pushHist(bk);
-        bk.data.prestation_id = presta.id;
-        bk.data.price_per_day = Number(presta.price_chf);
-        bk.data.extras = [];
-        bk.step = "pick_extras";
-        setState(wBooking, chatId, bk);
-        return renderBooking(chatId);
+        pushStep(bk, bk.step);
+        bk.data.pet_id = pet.id;
+        delete bk.data._pet_new_type;
+        bk.step = "pick_presta";
+        setBkState(chatId, bk);
+        return renderBookingStep(chatId);
       } catch (e) {
         wBooking.delete(chatId);
-        return bot.sendMessage(chatId, `❌ Sur-mesure KO: ${e.message}`);
+        return bot.sendMessage(chatId, `❌ Création animal KO: ${e.message}`);
       }
-    }
-
-    if (bk.step === "multi_cats_count") {
-      const cnt = Number(text);
-      if (!Number.isFinite(cnt) || cnt < 0 || cnt > 20) return bot.sendMessage(chatId, "❌ Mets un nombre (0-20).");
-      pushHist(bk);
-      bk.data.multi_cats_count = Math.floor(cnt);
-      bk.step = "start_date";
-      setState(wBooking, chatId, bk);
-      return renderBooking(chatId);
     }
 
     if (bk.step === "start_date") {
-      if (!isValidISODate(text)) return bot.sendMessage(chatId, "❌ Format attendu: YYYY-MM-DD");
-      pushHist(bk);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return bot.sendMessage(chatId, "❌ Format attendu: YYYY-MM-DD");
+      pushStep(bk, bk.step);
       bk.data.start_date = text;
       bk.step = "end_date";
-      setState(wBooking, chatId, bk);
-      return renderBooking(chatId);
+      setBkState(chatId, bk);
+      return renderBookingStep(chatId);
     }
 
     if (bk.step === "end_date") {
-      if (!isValidISODate(text)) return bot.sendMessage(chatId, "❌ Format attendu: YYYY-MM-DD");
-      pushHist(bk);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return bot.sendMessage(chatId, "❌ Format attendu: YYYY-MM-DD");
+      pushStep(bk, bk.step);
       bk.data.end_date = text;
-      bk.step = "pick_employee";
-      setState(wBooking, chatId, bk);
-      return renderBooking(chatId);
+      bk.step = "share_employee";
+      setBkState(chatId, bk);
+      return renderBookingStep(chatId);
     }
 
     if (bk.step === "employee_percent") {
       const p = Number(text);
       if (!Number.isFinite(p) || p < 0 || p > 100) return bot.sendMessage(chatId, "❌ Mets un nombre 0-100");
-      pushHist(bk);
+      pushStep(bk, bk.step);
       bk.data.employee_percent = Math.floor(p);
       bk.step = "recap";
-      setState(wBooking, chatId, bk);
-      return renderBooking(chatId);
+      setBkState(chatId, bk);
+      return renderBookingStep(chatId);
     }
   }
 
-  /* ---------- CLIENT wizard (menu) ---------- */
-  const cs = getState(wClient, chatId);
+  /* ================== CLIENT WIZARD ================== */
+  const cs = wClient.get(chatId);
   if (cs) {
-    const d = cs.data;
+    const d = cs.data || {};
+    const isBk = cs.step?.startsWith("bk_") && d._returnToBooking;
 
-    if (cs.step === "name") {
-      d.name = text;
-      cs.step = "phone";
-      setState(wClient, chatId, cs);
-      return bot.sendMessage(chatId, "2/4 — Téléphone");
+    // booking inline create client
+    if (isBk) {
+      if (cs.step === "bk_name") {
+        d.name = text;
+        cs.step = "bk_phone";
+        wClient.set(chatId, cs);
+        return bot.sendMessage(chatId, "Téléphone (ou `-`) :");
+      }
+      if (cs.step === "bk_phone") {
+        d.phone = text === "-" ? "" : text;
+        cs.step = "bk_address";
+        wClient.set(chatId, cs);
+        return bot.sendMessage(chatId, "Adresse (ou `-`) :");
+      }
+      if (cs.step === "bk_address") {
+        d.address = text === "-" ? "" : text;
+        try {
+          const inserted = await dbInsertClient({
+            name: d.name,
+            phone: d.phone || "",
+            address: d.address || "",
+            notes: "",
+          });
+          wClient.delete(chatId);
+
+          const st = getBkState(chatId);
+          if (!st) return sendMainMenu(chatId);
+
+          pushStep(st, st.step);
+          st.data.client_id = inserted.id;
+          st.step = "pick_pet";
+          setBkState(chatId, st);
+          return renderBookingStep(chatId);
+        } catch (e) {
+          wClient.delete(chatId);
+          return bot.sendMessage(chatId, `❌ Ajout client KO: ${e.message}`);
+        }
+      }
     }
-    if (cs.step === "phone") {
-      d.phone = text;
-      cs.step = "address";
-      setState(wClient, chatId, cs);
-      return bot.sendMessage(chatId, "3/4 — Adresse");
-    }
-    if (cs.step === "address") {
-      d.address = text;
-      cs.step = "notes";
-      setState(wClient, chatId, cs);
-      return bot.sendMessage(chatId, "4/4 — Notes (ou '-')");
-    }
-    if (cs.step === "notes") {
-      d.notes = text === "-" ? "" : text;
-      try {
-        const inserted = await dbInsertClient({
-          name: d.name,
-          phone: d.phone || "",
-          address: d.address || "",
-          notes: d.notes || "",
-        });
-        wClient.delete(chatId);
-        return bot.sendMessage(chatId, `✅ Client ajouté: #${inserted.id} — ${inserted.name}`);
-      } catch (e) {
-        wClient.delete(chatId);
-        return bot.sendMessage(chatId, `❌ Ajout client KO: ${e.message}`);
+
+    // normal client add/edit
+    if (!isBk) {
+      if (cs.step === "name") {
+        d.name = text;
+        cs.step = "phone";
+        wClient.set(chatId, cs);
+        return bot.sendMessage(chatId, "2/4 — Téléphone (ou `-`) :");
+      }
+      if (cs.step === "phone") {
+        d.phone = text === "-" ? "" : text;
+        cs.step = "address";
+        wClient.set(chatId, cs);
+        return bot.sendMessage(chatId, "3/4 — Adresse (ou `-`) :");
+      }
+      if (cs.step === "address") {
+        d.address = text === "-" ? "" : text;
+        cs.step = "notes";
+        wClient.set(chatId, cs);
+        return bot.sendMessage(chatId, "4/4 — Notes (ou `-`) :");
+      }
+      if (cs.step === "notes") {
+        d.notes = text === "-" ? "" : text;
+        try {
+          const inserted = await dbInsertClient({
+            name: d.name,
+            phone: d.phone || "",
+            address: d.address || "",
+            notes: d.notes || "",
+          });
+          wClient.delete(chatId);
+          return bot.sendMessage(chatId, `✅ Client ajouté: #${inserted.id} — ${inserted.name}`, kb([[{ text: "⬅️ Clients", callback_data: "m_clients" }]]));
+        } catch (e) {
+          wClient.delete(chatId);
+          return bot.sendMessage(chatId, `❌ Ajout client KO: ${e.message}`);
+        }
+      }
+
+      // edit
+      if (cs.step === "edit_name") {
+        d.name = text;
+        cs.step = "edit_phone";
+        wClient.set(chatId, cs);
+        return bot.sendMessage(chatId, "Téléphone (ou `-`) :");
+      }
+      if (cs.step === "edit_phone") {
+        d.phone = text === "-" ? "" : text;
+        cs.step = "edit_address";
+        wClient.set(chatId, cs);
+        return bot.sendMessage(chatId, "Adresse (ou `-`) :");
+      }
+      if (cs.step === "edit_address") {
+        d.address = text === "-" ? "" : text;
+        cs.step = "edit_notes";
+        wClient.set(chatId, cs);
+        return bot.sendMessage(chatId, "Notes (ou `-`) :");
+      }
+      if (cs.step === "edit_notes") {
+        d.notes = text === "-" ? "" : text;
+        try {
+          const updated = await dbUpdateClient(d.id, {
+            name: d.name,
+            phone: d.phone || "",
+            address: d.address || "",
+            notes: d.notes || "",
+          });
+          wClient.delete(chatId);
+          return bot.sendMessage(chatId, `✅ Client modifié: #${updated.id} — ${updated.name}`, kb([[{ text: "⬅️ Retour", callback_data: `cl_open_${updated.id}` }]]));
+        } catch (e) {
+          wClient.delete(chatId);
+          return bot.sendMessage(chatId, `❌ Modif client KO: ${e.message}`);
+        }
       }
     }
   }
 
-  /* ---------- EMPLOYEE wizard ---------- */
-  const es = getState(wEmployee, chatId);
+  /* ================== EMPLOYEE WIZARD ================== */
+  const es = wEmployee.get(chatId);
   if (es) {
-    const d = es.data;
+    const d = es.data || {};
 
     if (es.step === "name") {
       d.name = text;
       es.step = "phone";
-      setState(wEmployee, chatId, es);
-      return bot.sendMessage(chatId, "2/3 — Téléphone (ou '-')");
+      wEmployee.set(chatId, es);
+      return bot.sendMessage(chatId, "2/4 — Téléphone (ou `-`) :");
     }
     if (es.step === "phone") {
       d.phone = text === "-" ? "" : text;
       es.step = "percent";
-      setState(wEmployee, chatId, es);
-      return bot.sendMessage(chatId, "3/3 — Pourcentage par défaut (0-100)");
+      wEmployee.set(chatId, es);
+      return bot.sendMessage(chatId, "3/4 — Pourcentage par défaut (0-100) :");
     }
     if (es.step === "percent") {
       const p = Number(text);
       if (!Number.isFinite(p) || p < 0 || p > 100) return bot.sendMessage(chatId, "❌ Mets un nombre 0-100");
       d.default_percent = Math.floor(p);
-
+      es.step = "active";
+      wEmployee.set(chatId, es);
+      return bot.sendMessage(chatId, "4/4 — Actif ? (oui/non)", kb([[{ text: "⬅️ Retour", callback_data: "m_emps" }]]));
+    }
+    if (es.step === "active") {
+      const v = text.toLowerCase();
+      const active = v === "oui" || v === "o" || v === "yes" || v === "y" || v === "1";
       try {
         const inserted = await dbInsertEmployee({
           name: d.name,
           phone: d.phone || "",
-          default_percent: d.default_percent,
-          active: true, // <-- SQL column is "active"
+          default_percent: d.default_percent || 0,
+          active,
         });
         wEmployee.delete(chatId);
-        return bot.sendMessage(chatId, `✅ Employé ajouté: #${inserted.id} — ${inserted.name} (${inserted.default_percent}%)`);
+        return bot.sendMessage(chatId, `✅ Employé ajouté: #${inserted.id} — ${inserted.name}`, kb([[{ text: "⬅️ Employés", callback_data: "m_emps" }]]));
       } catch (e) {
         wEmployee.delete(chatId);
         return bot.sendMessage(chatId, `❌ Ajout employé KO: ${e.message}`);
+      }
+    }
+
+    // edit
+    if (es.step === "edit_name") {
+      d.name = text;
+      es.step = "edit_phone";
+      wEmployee.set(chatId, es);
+      return bot.sendMessage(chatId, "Téléphone (ou `-`) :");
+    }
+    if (es.step === "edit_phone") {
+      d.phone = text === "-" ? "" : text;
+      es.step = "edit_percent";
+      wEmployee.set(chatId, es);
+      return bot.sendMessage(chatId, "Pourcentage par défaut (0-100) :");
+    }
+    if (es.step === "edit_percent") {
+      const p = Number(text);
+      if (!Number.isFinite(p) || p < 0 || p > 100) return bot.sendMessage(chatId, "❌ Mets un nombre 0-100");
+      d.default_percent = Math.floor(p);
+      es.step = "edit_active";
+      wEmployee.set(chatId, es);
+      return bot.sendMessage(chatId, "Actif ? (oui/non)");
+    }
+    if (es.step === "edit_active") {
+      const v = text.toLowerCase();
+      const active = v === "oui" || v === "o" || v === "yes" || v === "y" || v === "1";
+      try {
+        const updated = await dbUpdateEmployee(d.id, {
+          name: d.name,
+          phone: d.phone || "",
+          default_percent: d.default_percent || 0,
+          active,
+        });
+        wEmployee.delete(chatId);
+        return bot.sendMessage(chatId, `✅ Employé modifié: #${updated.id} — ${updated.name}`, kb([[{ text: "⬅️ Retour", callback_data: `emp_open_${updated.id}` }]]));
+      } catch (e) {
+        wEmployee.delete(chatId);
+        return bot.sendMessage(chatId, `❌ Modif employé KO: ${e.message}`);
+      }
+    }
+  }
+
+  /* ================== PET WIZARD ================== */
+  const ps = wPet.get(chatId);
+  if (ps) {
+    const d = ps.data || {};
+
+    if (ps.step === "name") {
+      d.name = text;
+      ps.step = "notes";
+      wPet.set(chatId, ps);
+      return bot.sendMessage(chatId, "3/3 — Notes (ou `-`) :");
+    }
+    if (ps.step === "notes") {
+      d.notes = text === "-" ? "" : text;
+      try {
+        const inserted = await dbInsertPet({
+          client_id: d.client_id,
+          name: d.name,
+          animal_type: d.animal_type || "chat",
+          notes: d.notes || "",
+          active: true,
+        });
+        wPet.delete(chatId);
+        return bot.sendMessage(chatId, `✅ Animal ajouté: #${inserted.id} — ${inserted.name}`, kb([[{ text: "⬅️ Retour", callback_data: `pet_list_${inserted.client_id}` }]]));
+      } catch (e) {
+        wPet.delete(chatId);
+        return bot.sendMessage(chatId, `❌ Ajout animal KO: ${e.message}`);
+      }
+    }
+
+    // edit
+    if (ps.step === "edit_name") {
+      d.name = text;
+      ps.step = "edit_notes";
+      wPet.set(chatId, ps);
+      return bot.sendMessage(chatId, "Notes (ou `-`) :");
+    }
+    if (ps.step === "edit_notes") {
+      d.notes = text === "-" ? "" : text;
+      try {
+        const updated = await dbUpdatePet(d.id, { name: d.name, notes: d.notes || "" });
+        wPet.delete(chatId);
+        return bot.sendMessage(chatId, "✅ Animal modifié.", kb([[{ text: "⬅️ Retour", callback_data: `pet_open_${updated.id}` }]]));
+      } catch (e) {
+        wPet.delete(chatId);
+        return bot.sendMessage(chatId, `❌ Modif animal KO: ${e.message}`);
+      }
+    }
+  }
+
+  /* ================== PRESTATION WIZARD ================== */
+  const pr = wPresta.get(chatId);
+  if (pr) {
+    const d = pr.data || {};
+
+    if (pr.step === "name") {
+      d.name = text;
+      pr.step = "animal";
+      wPresta.set(chatId, pr);
+      return bot.sendMessage(chatId, "2/6 — Type animal (chat / lapin / autre) :");
+    }
+    if (pr.step === "animal") {
+      const a = text.toLowerCase();
+      if (!ANIMALS.includes(a)) return bot.sendMessage(chatId, "❌ Mets: chat / lapin / autre");
+      d.animal_type = a;
+      pr.step = "price";
+      wPresta.set(chatId, pr);
+      return bot.sendMessage(chatId, "3/6 — Prix CHF (ex: 15, 46, 55) :");
+    }
+    if (pr.step === "price") {
+      const n = Number(text.replace(",", "."));
+      if (!Number.isFinite(n) || n < 0) return bot.sendMessage(chatId, "❌ Prix invalide");
+      d.price_chf = money2(n);
+      pr.step = "visits";
+      wPresta.set(chatId, pr);
+      return bot.sendMessage(chatId, "4/6 — Visites par jour (1 ou 2) :");
+    }
+    if (pr.step === "visits") {
+      const v = Number(text);
+      if (![1, 2].includes(v)) return bot.sendMessage(chatId, "❌ Mets 1 ou 2");
+      d.visits_per_day = v;
+      pr.step = "duration";
+      wPresta.set(chatId, pr);
+      return bot.sendMessage(chatId, "5/6 — Durée totale par jour (minutes) :");
+    }
+    if (pr.step === "duration") {
+      const m = Number(text);
+      if (!Number.isFinite(m) || m < 0) return bot.sendMessage(chatId, "❌ Durée invalide");
+      d.duration_min = Math.floor(m);
+      pr.step = "desc";
+      wPresta.set(chatId, pr);
+      return bot.sendMessage(chatId, "6/6 — Description (tu peux coller tout le texte) :");
+    }
+    if (pr.step === "desc") {
+      d.description = text || "";
+      try {
+        const inserted = await dbInsertPrestation({
+          name: d.name,
+          animal_type: d.animal_type,
+          price_chf: d.price_chf || 0,
+          description: d.description || "",
+          visits_per_day: d.visits_per_day || 1,
+          duration_min: d.duration_min || 15,
+          image_url: "",
+          active: true,
+        });
+        wPresta.delete(chatId);
+        return bot.sendMessage(chatId, `✅ Prestation ajoutée: #${inserted.id} — ${inserted.name}`, kb([[{ text: "⬅️ Prestations", callback_data: "m_prestas" }]]));
+      } catch (e) {
+        wPresta.delete(chatId);
+        return bot.sendMessage(chatId, `❌ Ajout prestation KO: ${e.message}`);
+      }
+    }
+
+    // edit
+    if (pr.step === "edit_name") {
+      d.name = text;
+      pr.step = "edit_price";
+      wPresta.set(chatId, pr);
+      return bot.sendMessage(chatId, "Prix CHF (ex: 15, 46, 55) :");
+    }
+    if (pr.step === "edit_price") {
+      const n = Number(text.replace(",", "."));
+      if (!Number.isFinite(n) || n < 0) return bot.sendMessage(chatId, "❌ Prix invalide");
+      d.price_chf = money2(n);
+      pr.step = "edit_desc";
+      wPresta.set(chatId, pr);
+      return bot.sendMessage(chatId, "Description (ou `-`) :");
+    }
+    if (pr.step === "edit_desc") {
+      d.description = text === "-" ? "" : text;
+      try {
+        const updated = await dbUpdatePrestation(d.id, { name: d.name, price_chf: d.price_chf, description: d.description || "" });
+        wPresta.delete(chatId);
+        return bot.sendMessage(chatId, "✅ Prestation modifiée.", kb([[{ text: "⬅️ Retour", callback_data: `pre_open_${updated.id}` }]]));
+      } catch (e) {
+        wPresta.delete(chatId);
+        return bot.sendMessage(chatId, `❌ Modif prestation KO: ${e.message}`);
       }
     }
   }
