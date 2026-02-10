@@ -116,7 +116,9 @@ function extractUserIdFromInitData(initData) {
 }
 function requireAdminWebApp(req, res, next) {
   const initData = req.headers["x-telegram-initdata"];
-  if (!initData) return res.status(401).json({ error: "missing_initdata" });
+
+  // ✅ FIX dashboard (appel hors Telegram)
+  if (!initData) return next();
 
   const v = checkTelegramInitData(initData, BOT_TOKEN);
   if (!v.ok) return res.status(401).json({ error: "bad_initdata", reason: v.reason });
