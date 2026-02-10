@@ -2,13 +2,12 @@
   "name": "shasitter-bot",
   "version": "1.0.0",
   "main": "index.js",
-  "type": "module",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
-    "node-telegram-bot-api": "^0.64.0",
-    "@supabase/supabase-js": "^2.39.3",
-    "dotenv": "^16.4.1"
+    "express": "^4.19.2",
+    "node-telegram-bot-api": "^0.66.0",
+    "@supabase/supabase-js": "^2.45.4"
   }
 }

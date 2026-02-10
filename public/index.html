@@ -3,15 +3,13 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
-    <title>HarvestDex — Dex</title>
+    <title>ShaSitter — Dashboard</title>
 
     <link rel="icon" type="image/x-icon" href="assets/favicon.ico" />
     <link href="css/styles.css" rel="stylesheet" />
-
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
 
     <style>
-      /* ================== V3: GALAXY / NEON ================== */
       :root{
         --pk-red: rgba(220,53,69,1);
         --pk-amber: rgba(255,193,7,1);
@@ -30,7 +28,6 @@
         position: relative;
         overflow-x: hidden;
       }
-
       body.bg-dark::before{
         content:"";
         position:fixed; inset:0;
@@ -49,80 +46,9 @@
         100%{ transform: translate3d(-60px, 40px, 0); }
       }
 
-      .list-group-item{
-        transition: transform .12s ease, box-shadow .12s ease, border-color .12s ease;
-      }
-      .list-group-item:hover{
-        transform: translateY(-1px);
-        border-color: rgba(255,255,255,.22) !important;
-        box-shadow: 0 10px 26px rgba(0,0,0,.45);
-      }
+      .panel { display:none; }
+      .panel.active { display:block; }
 
-      /* ================== FEATURED (Rare) ================== */
-      .featured-wrap {
-        position: relative;
-        border-radius: 18px;
-        overflow: hidden;
-        border: 1px solid rgba(220, 53, 69, 0.6);
-        background:
-          radial-gradient(1200px 400px at 20% 10%, rgba(255, 255, 255, 0.10), transparent 60%),
-          radial-gradient(700px 300px at 80% 20%, rgba(255,193,7,.10), transparent 60%),
-          linear-gradient(180deg, rgba(0, 0, 0, 0.70), rgba(0, 0, 0, 0.95));
-        box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.05), 0 16px 40px rgba(0, 0, 0, 0.65);
-      }
-      .featured-shine::before {
-        content: "";
-        position: absolute;
-        top: -40%;
-        left: -60%;
-        width: 60%;
-        height: 180%;
-        background: linear-gradient(115deg, transparent 0%, rgba(255,255,255,0.20) 45%, transparent 70%);
-        transform: rotate(20deg);
-        animation: shineMove 2.8s linear infinite;
-        pointer-events: none;
-      }
-      @keyframes shineMove { 0%{ left:-70%; } 100%{ left:130%; } }
-
-      .featured-glow { animation: glowPulse 2.2s ease-in-out infinite; }
-      @keyframes glowPulse {
-        0%, 100% { box-shadow: 0 0 0 1px rgba(220,53,69,0.30), 0 16px 40px rgba(0,0,0,0.65); }
-        50% { box-shadow: 0 0 0 1px rgba(255,193,7,0.40), 0 0 26px rgba(255,193,7,0.18), 0 16px 40px rgba(0,0,0,0.65); }
-      }
-
-      .featured-mini { font-size:.92rem; color: rgba(255,255,255,0.70); }
-      .featured-badge { font-weight:900; letter-spacing:.3px; }
-      .featured-btn { border-radius: 14px; }
-
-      .sparkles{ position:absolute; inset:0; pointer-events:none; opacity:.95; }
-      .sparkle{
-        position:absolute;
-        width: 8px; height: 8px;
-        border-radius: 2px;
-        transform: rotate(45deg);
-        background: rgba(255,193,7,.90);
-        filter: drop-shadow(0 0 8px rgba(255,193,7,.35));
-        animation: sparklePop 1.8s ease-in-out infinite;
-      }
-      @keyframes sparklePop{
-        0%{ transform: rotate(45deg) scale(.6); opacity:.12; }
-        45%{ transform: rotate(45deg) scale(1.22); opacity:.95; }
-        100%{ transform: rotate(45deg) scale(.78); opacity:.28; }
-      }
-
-      /* ================== SKELETON ================== */
-      .skeleton{
-        background: linear-gradient(90deg, rgba(255,255,255,.06), rgba(255,255,255,.14), rgba(255,255,255,.06));
-        background-size: 240% 100%;
-        animation: sk 1.1s ease-in-out infinite;
-        border-radius: 12px;
-      }
-      @keyframes sk{ 0%{ background-position:0% 0; } 100%{ background-position:100% 0; } }
-      .sk-row{ height:56px; margin-bottom:10px; border-radius:14px; }
-      .sk-img{ height:220px; border-radius:18px; }
-      .sk-line{ height:12px; margin-bottom:10px; border-radius:10px; }
-
-      /* ================== CONTROLS ================== */
       .control-pill{
         border: 1px solid rgba(255,255,255,.12);
         background: rgba(255,255,255,.04);
@@ -142,53 +68,23 @@
         box-shadow: 0 0 0 1px rgba(255,193,7,.12), 0 0 18px rgba(255,193,7,.10);
       }
 
-      #subChips { display:none; gap:8px; flex-wrap:wrap; margin-top:10px; }
+      .card-soft{
+        border-radius: 18px;
+        border: 1px solid rgba(255,255,255,.10);
+        background: rgba(0,0,0,.60);
+        box-shadow: 0 0 0 1px rgba(255,255,255,0.04), 0 16px 40px rgba(0,0,0,0.60);
+      }
 
-      #toast{
-        position: fixed;
-        left: 50%;
-        bottom: 78px;
-        transform: translateX(-50%);
-        padding: 10px 14px;
-        border-radius: 14px;
-        background: rgba(0,0,0,.75);
+      .mini{
         border: 1px solid rgba(255,255,255,.12);
-        color: rgba(255,255,255,.9);
-        box-shadow: 0 14px 40px rgba(0,0,0,.55);
-        display:none;
-        z-index: 9999;
+        background: rgba(255,255,255,.04);
+        border-radius: 16px;
+        padding: 10px;
       }
 
-      body.shiny-mode .card,
-      body.shiny-mode .featured-wrap{
-        box-shadow: 0 0 0 1px rgba(255,193,7,.14), 0 18px 50px rgba(0,0,0,.70);
-      }
-      body.shiny-mode .navbar{
-        box-shadow: 0 12px 40px rgba(0,0,0,.65);
-      }
-
-      /* Panels (Dex / MonDex / Profil) */
-      .panel { display:none; }
-      .panel.active { display:block; }
-
-      /* anchor for scroll target */
-      #detailsAnchor { scroll-margin-top: 80px; }
-
-      /* HarvestDex rows */
-      .hd-row{ display:flex; gap:10px; overflow:auto; padding-bottom:6px; scrollbar-width: none; }
-      .hd-row::-webkit-scrollbar{ display:none; }
-      .hd-mini{ min-width: 220px; flex: 0 0 auto; border:1px solid rgba(255,255,255,.12); background: rgba(255,255,255,.04); border-radius: 16px; padding:10px; cursor:pointer; }
-      .hd-mini:hover{ border-color: rgba(255,193,7,.35); box-shadow: 0 10px 26px rgba(0,0,0,.45); }
-      .hd-mini .t1{ font-weight:700; }
-      .hd-mini .t2{ font-size:.85rem; color: rgba(255,255,255,.65); }
-
-      /* Bottom nav minimal (si ton css/styles.css ne le fait pas) */
       .bottom-nav{
-        position: fixed;
-        left: 0; right: 0; bottom: 0;
-        display: flex;
-        justify-content: space-around;
-        gap: 6px;
+        position: fixed; left: 0; right: 0; bottom: 0;
+        display: flex; justify-content: space-around; gap: 6px;
         padding: 10px 10px;
         background: rgba(0,0,0,.92);
         border-top: 1px solid rgba(220,53,69,.55);
@@ -213,7 +109,26 @@
       }
       .bn-ico{ font-size: 1.05rem; }
       .bn-txt{ font-weight: 700; font-size: .92rem; }
-      main{ padding-bottom: 88px; } /* place pour bottom nav */
+
+      #toast{
+        position: fixed;
+        left: 50%;
+        bottom: 78px;
+        transform: translateX(-50%);
+        padding: 10px 14px;
+        border-radius: 14px;
+        background: rgba(0,0,0,.75);
+        border: 1px solid rgba(255,255,255,.12);
+        color: rgba(255,255,255,.9);
+        box-shadow: 0 14px 40px rgba(0,0,0,.55);
+        display:none;
+        z-index: 9999;
+      }
+
+      main{ padding-bottom: 92px; }
+      .muted{ color: rgba(255,255,255,.70); }
+      .kpi{ font-weight: 900; font-size: 1.25rem; }
+      .list-group-item{ background: rgba(0,0,0,.35); border-color: rgba(255,255,255,.10); }
     </style>
   </head>
 
@@ -221,12 +136,12 @@
     <!-- NAVBAR -->
     <nav class="navbar navbar-expand-lg navbar-dark bg-black border-bottom border-danger">
       <div class="container">
-        <a class="navbar-brand fw-bold text-danger" href="#">HarvestDex</a>
+        <a class="navbar-brand fw-bold text-danger" href="#">ShaSitter</a>
 
         <div class="d-flex gap-2">
-          <button id="themeBtn" class="btn btn-sm btn-outline-warning" type="button">✨ Shiny</button>
+          <button id="themeBtn" class="btn btn-sm btn-outline-warning" type="button">✨ Thème</button>
+          <button id="refreshBtn" class="btn btn-sm btn-outline-light" type="button">↻ Refresh</button>
           <button id="closeBtn" class="btn btn-sm btn-outline-danger" type="button">Fermer</button>
-          <button id="adminBtn" class="btn btn-sm btn-outline-light" type="button" style="display:none;">🧰 Admin</button>
         </div>
       </div>
     </nav>
@@ -244,352 +159,218 @@
             </div>
 
             <div>
-              <h1 class="h3 mb-1 text-white">Fiches THC & Terpènes</h1>
-              <p class="mb-0 text-secondary">Choisis une catégorie → sélectionne une fiche → lis le profil</p>
+              <h1 class="h3 mb-1 text-white">Dashboard ShaSitter</h1>
+              <p class="mb-0 text-secondary">
+                Gestion privée (admin) — prestations, clients, réservations, compta.
+              </p>
             </div>
           </div>
         </div>
       </div>
     </header>
 
-    <!-- CONTENT -->
     <main class="py-4">
       <div class="container">
-
-        <!-- ===================== DEX PANEL ===================== -->
-        <section id="panelDex" class="panel active">
+        <!-- ===================== HOME ===================== -->
+        <section id="panelHome" class="panel active">
           <div class="row g-4">
-            <!-- LISTE -->
             <div class="col-lg-5">
-              <div id="detailsCard" class="card bg-black text-white border border-danger rounded-4 shadow-sm">
+              <div class="card card-soft text-white">
                 <div class="card-body">
-
-                  <!-- FEATURED -->
-                  <div id="featuredBox" class="featured-wrap featured-shine featured-glow p-3 mb-3" style="display:none;">
-                    <div id="sparkles" class="sparkles"></div>
-
-                    <div class="d-flex align-items-start gap-3">
-                      <img id="featuredImg" src="" alt="" width="68" height="68"
-                        style="border-radius:14px; object-fit:cover; border:1px solid rgba(255,255,255,.12);" />
-                      <div class="flex-grow-1">
-                        <div class="d-flex justify-content-between gap-2 flex-wrap">
-                          <div>
-                            <div class="d-flex align-items-center gap-2 flex-wrap">
-                              <div id="featuredTitle" class="badge text-bg-warning featured-badge mb-2">✨ Shiny du moment</div>
-                              <div id="featuredCount" class="badge text-bg-danger mb-2" style="display:none;">Rare #—</div>
-                            </div>
-                            <div id="featuredName" class="fw-bold">—</div>
-                            <div id="featuredMeta" class="featured-mini">—</div>
-                          </div>
-                          <div class="d-flex align-items-center gap-2">
-                            <button id="featuredViewBtn" class="btn btn-sm btn-danger featured-btn" type="button">Voir</button>
-                          </div>
-                        </div>
-                        <div id="featuredLine" class="mt-2 featured-mini">🧬 —</div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <!-- QUICK SECTIONS -->
-                  <div class="mb-3">
-                    <div class="d-flex align-items-center justify-content-between">
-                      <div class="fw-bold">🔥 Tendance</div>
-                      <button id="trendMoreBtn" class="btn btn-sm btn-outline-light" type="button">Voir tout</button>
-                    </div>
-                    <div id="trendRow" class="hd-row mt-2"></div>
-                  </div>
-
-                  <div class="mb-3">
-                    <div class="d-flex align-items-center justify-content-between">
-                      <div class="fw-bold">⭐ Nouveautés</div>
-                      <button id="newMoreBtn" class="btn btn-sm btn-outline-light" type="button">Voir tout</button>
-                    </div>
-                    <div id="newRow" class="hd-row mt-2"></div>
-                  </div>
-
-                  <div class="mb-3">
-                    <div class="d-flex align-items-center justify-content-between">
-                      <div class="fw-bold">🏆 Populaire</div>
-                      <button id="popularMoreBtn" class="btn btn-sm btn-outline-light" type="button">Voir tout</button>
-                    </div>
-                    <div id="popularRow" class="hd-row mt-2"></div>
-                  </div>
-
-                  <!-- CONTROLS -->
                   <div class="control-pill mb-3">
-                    <div class="d-flex align-items-center justify-content-between gap-2 flex-wrap">
-                      <div class="d-flex align-items-center gap-2 flex-wrap">
-                        <span class="badge text-bg-danger" id="countBadge">0</span>
-                        <span class="badge text-bg-warning text-dark" id="favBadge">❤️ 0</span>
+                    <div class="d-flex justify-content-between flex-wrap gap-2">
+                      <div>
+                        <div class="muted">Total (toutes réservations)</div>
+                        <div class="kpi"><span id="kpiTotalAll">—</span> CHF</div>
                       </div>
-
-                      <div class="d-flex align-items-center gap-2 flex-wrap">
-                        <select id="sortSelect" class="form-select form-select-sm bg-dark text-white border-secondary" style="width:auto;">
-                          <option value="new">🆕 Nouveau</option>
-                          <option value="az">A–Z</option>
-                          <option value="thc">🔥 THC (haut)</option>
-                        </select>
-                        <button id="favToggle" class="btn btn-sm pill-btn" type="button">❤️ Favoris</button>
+                      <div>
+                        <div class="muted">Part ShaSitter</div>
+                        <div class="kpi text-warning"><span id="kpiTotalCompany">—</span> CHF</div>
                       </div>
-                    </div>
-
-                    <div class="mt-2 d-flex gap-2">
-                      <input
-                        id="searchInput"
-                        class="form-control bg-dark text-white border-secondary"
-                        type="search"
-                        placeholder="Rechercher… (terpènes/arômes/effets aussi)"
-                        autocomplete="off"
-                      />
-                      <button id="clearBtn" class="btn btn-outline-light" type="button">✕</button>
-                    </div>
-                  </div>
-
-                  <!-- FILTER CHIPS -->
-                  <div class="mt-2 d-flex flex-wrap gap-2">
-                    <button class="btn btn-sm btn-outline-danger chip active" data-type="all" type="button">Tous</button>
-                    <button class="btn btn-sm btn-outline-light chip" data-type="hash" type="button">Hash</button>
-                    <button class="btn btn-sm btn-outline-success chip" data-type="weed" type="button">Weed</button>
-                    <button class="btn btn-sm btn-outline-warning chip" data-type="extraction" type="button">Extraction</button>
-                    <button class="btn btn-sm btn-outline-info chip" data-type="wpff" type="button">WPFF</button>
-                    <button class="btn btn-sm btn-outline-light chip" data-type="farm" type="button">🌾 Farms</button>
-                  </div>
-
-                  <!-- Sub-catégories -->
-                  <div id="subChips"></div>
-
-                  <!-- Farms section -->
-                  <div id="farmSection" style="display:none;" class="mt-3">
-                    <div class="control-pill mb-2">
-                      <div class="d-flex gap-2">
-                        <input id="farmSearchInput" class="form-control bg-dark text-white border-secondary" type="search" placeholder="Rechercher une farm…" autocomplete="off" />
-                        <button id="farmClearBtn" class="btn btn-outline-light" type="button">✕</button>
+                      <div>
+                        <div class="muted">Part Employés</div>
+                        <div class="kpi text-danger"><span id="kpiTotalEmployees">—</span> CHF</div>
                       </div>
                     </div>
-                    <div id="farmList" class="list-group list-group-flush"></div>
                   </div>
 
-                  <!-- Skeleton list -->
-                  <div id="listSkeleton" style="display:none;" class="mt-3">
-                    <div class="skeleton sk-row"></div>
-                    <div class="skeleton sk-row"></div>
-                    <div class="skeleton sk-row"></div>
-                    <div class="skeleton sk-row"></div>
+                  <div class="mini mb-3">
+                    <div class="fw-bold mb-2">⏰ À venir (résumé)</div>
+                    <div class="muted">Réservations: <span id="kpiUpcomingCount">—</span></div>
+                    <div class="muted">Prochaine: <span id="kpiNextBooking">—</span></div>
                   </div>
 
-                  <!-- LIST -->
-                  <div class="mt-3 list-group list-group-flush" id="list"></div>
+                  <div class="mini">
+                    <div class="fw-bold mb-2">🧾 Passées (résumé)</div>
+                    <div class="muted">Réservations: <span id="kpiPastCount">—</span></div>
+                  </div>
 
-                  <div class="mt-2">
-                    <small class="text-secondary">
-                      ⚠️ Info éducative uniquement. Les effets varient selon la personne. Respecte la loi.
-                    </small>
+                  <div class="mt-3 text-secondary small">
+                    ℹ️ Tout ajout / modification se fait via Telegram (menu /start).
                   </div>
                 </div>
               </div>
             </div>
 
-            <!-- DETAILS -->
-            <div class="col-lg-7" id="detailsAnchor">
-              <div class="card bg-black text-white border border-danger rounded-4 shadow-sm">
+            <div class="col-lg-7">
+              <div class="card card-soft text-white">
                 <div class="card-body">
-                  <div class="d-flex align-items-start justify-content-between gap-3 flex-wrap">
-                    <div>
-                      <h2 class="h4 mb-1" id="pokeName">Sélectionne une fiche</h2>
-                      <div class="text-secondary" id="pokeId">—</div>
-                    </div>
+                  <h2 class="h4 mb-2">📅 Réservations à venir</h2>
+                  <div id="upcomingList" class="list-group list-group-flush"></div>
 
-                    <div class="d-flex gap-2">
-                      <button id="randomBtn" class="btn btn-danger" type="button">🎲 Random</button>
-                      <button id="shareBtn" class="btn btn-outline-light" type="button">📤 Partager</button>
-                    </div>
-                  </div>
+                  <hr class="border-secondary my-4" />
 
-                  <hr class="border-secondary my-3" />
-
-                  <!-- Skeleton details -->
-                  <div id="detailsSkeleton" style="display:none;">
-                    <div class="row g-3 align-items-center">
-                      <div class="col-md-5"><div class="skeleton sk-img"></div></div>
-                      <div class="col-md-7">
-                        <div class="skeleton sk-line" style="width:60%;"></div>
-                        <div class="skeleton sk-line" style="width:45%;"></div>
-                        <div class="skeleton sk-line" style="width:80%;"></div>
-                        <div class="skeleton sk-line" style="width:90%;"></div>
-                        <div class="skeleton sk-line" style="width:70%;"></div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div id="detailsReal">
-                    <div class="row g-3 align-items-center">
-                      <div class="col-md-5">
-                        <div class="p-3 rounded-4 bg-dark border border-secondary text-center">
-                          <img id="pokeImg" src="" alt="" class="img-fluid" style="max-height: 220px; display:none;" />
-                          <div id="placeholder" class="text-secondary">👈 Choisis dans la liste</div>
-                        </div>
-                        <div class="mt-2 d-flex gap-2">
-                          <button id="favBtn" class="btn btn-sm btn-outline-warning w-100" type="button">❤️ Ajouter aux favoris</button>
-                        </div>
-                      </div>
-
-                      <div class="col-md-7">
-                        <div class="p-3 rounded-4 bg-dark border border-secondary">
-                          <div class="d-flex justify-content-between">
-                            <span class="text-secondary">Catégorie</span>
-                            <span id="pokeType" class="fw-semibold">—</span>
-                          </div>
-                          <div class="d-flex justify-content-between mt-2">
-                            <span class="text-secondary">THC</span>
-                            <span id="pokeThc" class="fw-semibold">—</span>
-                          </div>
-
-                          <hr class="border-secondary my-3" />
-
-                          <pre id="pokeDesc" class="mb-0 text-secondary" style="white-space: pre-wrap; font-family: inherit;">
-Ici tu verras la fiche complète (terpènes, arômes, effets, conseils).
-                          </pre>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div class="mt-3 text-end">
-                    <small class="text-secondary"><span>HARVESTDEX 1.0</span></small>
-                  </div>
+                  <h2 class="h4 mb-2">🧾 Dernières réservations passées</h2>
+                  <div id="pastList" class="list-group list-group-flush"></div>
                 </div>
               </div>
             </div>
           </div>
         </section>
 
-        <!-- ===================== MY DEX PANEL ===================== -->
-        <section id="panelMyDex" class="panel">
-          <div class="card bg-black text-white border border-danger rounded-4 shadow-sm">
+        <!-- ===================== CLIENTS ===================== -->
+        <section id="panelClients" class="panel">
+          <div class="card card-soft text-white">
             <div class="card-body">
-              <h2 class="h4 mb-2">⭐ Mon Dex</h2>
-              <p class="text-secondary mb-3">Ici tu verras tes favoris (liés à ton Telegram ID).</p>
-
-              <div id="myDexEmpty" class="text-secondary">Aucune fiche dans ton Dex pour le moment.</div>
-              <div id="myDexList" class="list-group list-group-flush mt-3"></div>
+              <div class="d-flex align-items-center justify-content-between gap-2 flex-wrap">
+                <h2 class="h4 mb-0">👤 Clients</h2>
+                <div class="control-pill">
+                  <div class="d-flex gap-2 align-items-center">
+                    <input id="clientsSearch" class="form-control bg-dark text-white border-secondary" type="search" placeholder="Rechercher client…" autocomplete="off" />
+                    <button id="clientsClear" class="btn btn-outline-light" type="button">✕</button>
+                  </div>
+                </div>
+              </div>
+              <div class="mt-3" id="clientsList"></div>
             </div>
           </div>
         </section>
 
-        <!-- ===================== PROFILE PANEL ===================== -->
-        <section id="panelProfile" class="panel">
-          <div class="card bg-black text-white border border-danger rounded-4 shadow-sm">
+        <!-- ===================== PRESTATIONS ===================== -->
+        <section id="panelPrestations" class="panel">
+          <div class="card card-soft text-white">
             <div class="card-body">
-              <h2 class="h4 mb-2">👤 Mon Profil</h2>
-              <p class="text-secondary mb-3">Ton Dex est lié à ton Telegram ID.</p>
-
-              <div class="p-3 rounded-4 bg-dark border border-secondary">
-                <div class="d-flex justify-content-between">
-                  <span class="text-secondary">Telegram ID</span>
-                  <span id="profileUserId" class="fw-semibold">—</span>
+              <div class="d-flex align-items-center justify-content-between gap-2 flex-wrap">
+                <h2 class="h4 mb-0">🐾 Prestations</h2>
+                <div class="control-pill">
+                  <div class="d-flex gap-2 align-items-center">
+                    <select id="prestaAnimalFilter" class="form-select bg-dark text-white border-secondary" style="width:auto;">
+                      <option value="all">Tous</option>
+                      <option value="chat">Chats</option>
+                      <option value="lapin">Lapins</option>
+                      <option value="autre">Autres</option>
+                    </select>
+                    <input id="prestaSearch" class="form-control bg-dark text-white border-secondary" type="search" placeholder="Rechercher prestation…" autocomplete="off" />
+                    <button id="prestaClear" class="btn btn-outline-light" type="button">✕</button>
+                  </div>
                 </div>
-                <div class="d-flex justify-content-between mt-2">
-                  <span class="text-secondary">Favoris</span>
-                  <span id="profileFavCount" class="fw-semibold">—</span>
+              </div>
+              <div class="mt-3" id="prestationsGrid"></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ===================== BOOKINGS ===================== -->
+        <section id="panelBookings" class="panel">
+          <div class="row g-4">
+            <div class="col-lg-6">
+              <div class="card card-soft text-white">
+                <div class="card-body">
+                  <h2 class="h4 mb-2">⏰ À venir</h2>
+                  <div id="bookingsUpcoming" class="list-group list-group-flush"></div>
+                </div>
+              </div>
+            </div>
+            <div class="col-lg-6">
+              <div class="card card-soft text-white">
+                <div class="card-body">
+                  <h2 class="h4 mb-2">🧾 Passées</h2>
+                  <div id="bookingsPast" class="list-group list-group-flush"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ===================== COMPTA ===================== -->
+        <section id="panelCompta" class="panel">
+          <div class="card card-soft text-white">
+            <div class="card-body">
+              <h2 class="h4 mb-3">💰 Comptabilité</h2>
+
+              <div class="row g-3">
+                <div class="col-md-4">
+                  <div class="mini">
+                    <div class="muted">Total</div>
+                    <div class="kpi"><span id="comptaTotal">—</span> CHF</div>
+                  </div>
+                </div>
+                <div class="col-md-4">
+                  <div class="mini">
+                    <div class="muted">Employés</div>
+                    <div class="kpi text-danger"><span id="comptaEmp">—</span> CHF</div>
+                  </div>
+                </div>
+                <div class="col-md-4">
+                  <div class="mini">
+                    <div class="muted">ShaSitter</div>
+                    <div class="kpi text-warning"><span id="comptaCo">—</span> CHF</div>
+                  </div>
+                </div>
+              </div>
+
+              <hr class="border-secondary my-4" />
+
+              <div class="row g-4">
+                <div class="col-lg-6">
+                  <div class="mini">
+                    <div class="fw-bold mb-2">📅 Total par mois</div>
+                    <div id="comptaMonths"></div>
+                  </div>
+                </div>
+
+                <div class="col-lg-6">
+                  <div class="mini">
+                    <div class="fw-bold mb-2">🏷️ Top clients</div>
+                    <div id="comptaClients"></div>
+                  </div>
+                  <div class="mini mt-3">
+                    <div class="fw-bold mb-2">🐾 Top prestations</div>
+                    <div id="comptaPrestations"></div>
+                  </div>
                 </div>
               </div>
 
               <div class="mt-3 text-secondary small">
-                ℹ️ Si ton ID est vide, ouvre l’app depuis Telegram (pas via navigateur normal).
+                ℹ️ Graphiques “simples” ici = barres / listes (rapides & lisibles dans Telegram).
               </div>
             </div>
           </div>
         </section>
-
       </div>
     </main>
 
     <footer class="py-4 bg-black border-top border-danger">
       <div class="container text-center text-secondary">
-        HarvestDex © <span id="year"></span>
+        ShaSitter © <span id="year"></span>
       </div>
     </footer>
 
-    <!-- ADMIN MODAL -->
-    <div class="modal fade" id="adminModal" tabindex="-1" aria-hidden="true">
-      <div class="modal-dialog modal-dialog-centered">
-        <div class="modal-content bg-black text-white border border-secondary rounded-4">
-          <div class="modal-header border-secondary">
-            <h5 class="modal-title">🧰 Commandes Admin</h5>
-            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
-          </div>
-          <div class="modal-body">
-            <pre id="adminCommands" class="mb-0" style="white-space:pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace; font-size: .95rem;"></pre>
-          </div>
-          <div class="modal-footer border-secondary">
-            <button id="copyAdminBtn" type="button" class="btn btn-outline-light">📋 Copier</button>
-            <button type="button" class="btn btn-danger" data-bs-dismiss="modal">Fermer</button>
-          </div>
-        </div>
-      </div>
-    </div>
-
     <div id="toast">—</div>
 
-    <!-- ✅ ONE bottom nav only -->
+    <!-- bottom nav -->
     <nav id="bottomNav" class="bottom-nav">
-      <button id="btnNavDex" class="bn-item active" type="button">
-        <span class="bn-ico">📘</span><span class="bn-txt">Dex</span>
-      </button>
-      <button id="btnNavMyDex" class="bn-item" type="button">
-        <span class="bn-ico">⭐</span><span class="bn-txt">Mon Dex</span>
-      </button>
-      <button id="btnNavProfile" class="bn-item" type="button">
-        <span class="bn-ico">👤</span><span class="bn-txt">Profil</span>
-      </button>
+      <button id="btnHome" class="bn-item active" type="button"><span class="bn-ico">🏠</span><span class="bn-txt">Accueil</span></button>
+      <button id="btnClients" class="bn-item" type="button"><span class="bn-ico">👤</span><span class="bn-txt">Clients</span></button>
+      <button id="btnPrestations" class="bn-item" type="button"><span class="bn-ico">🐾</span><span class="bn-txt">Prestations</span></button>
+      <button id="btnBookings" class="bn-item" type="button"><span class="bn-ico">📅</span><span class="bn-txt">Réservations</span></button>
+      <button id="btnCompta" class="bn-item" type="button"><span class="bn-ico">💰</span><span class="bn-txt">Compta</span></button>
     </nav>
 
-    <!-- Bootstrap bundle -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/js/bootstrap.bundle.min.js"></script>
-
-    <!-- App -->
     <script src="js/pokedex.js"></script>
-
     <script>
       document.getElementById("year").textContent = new Date().getFullYear();
-
-      // ✅ simple panel navigation (Dex / MyDex / Profile)
-      const panelDex = document.getElementById("panelDex");
-      const panelMyDex = document.getElementById("panelMyDex");
-      const panelProfile = document.getElementById("panelProfile");
-
-      const btnNavDex = document.getElementById("btnNavDex");
-      const btnNavMyDex = document.getElementById("btnNavMyDex");
-      const btnNavProfile = document.getElementById("btnNavProfile");
-
-      function setActive(btn){
-        [btnNavDex, btnNavMyDex, btnNavProfile].forEach(b => b.classList.remove("active"));
-        btn.classList.add("active");
-      }
-
-      function showPanel(which){
-        [panelDex, panelMyDex, panelProfile].forEach(p => p.classList.remove("active"));
-        which.classList.add("active");
-      }
-
-      btnNavDex.addEventListener("click", () => {
-        setActive(btnNavDex);
-        showPanel(panelDex);
-      });
-
-      btnNavMyDex.addEventListener("click", () => {
-        setActive(btnNavMyDex);
-        showPanel(panelMyDex);
-        // pokedex.js doit remplir myDexList via /api/mydex/:user_id
-        if (window.loadMyDex) window.loadMyDex();
-      });
-
-      btnNavProfile.addEventListener("click", () => {
-        setActive(btnNavProfile);
-        showPanel(panelProfile);
-        // pokedex.js doit remplir profileUserId & profileFavCount
-        if (window.loadProfile) window.loadProfile();
-      });
     </script>
   </body>
 </html>
