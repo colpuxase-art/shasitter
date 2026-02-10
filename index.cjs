@@ -39,18 +39,57 @@ const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE, {
 const ADMIN_IDS = new Set([6675436692]); // <-- ton ID Telegram
 const isAdmin = (chatId) => ADMIN_IDS.has(chatId);
 
-/* ================== TELEGRAM BOT (409 FIX) ==================
-   - IMPORTANT: sur Render => WEB_CONCURRENCY=1
-   - On force deleteWebhook(drop_pending_updates) puis startPolling
+/* ================== TELEGRAM BOT (ANTI-409 HARD FIX) ==================
+   Render peut lancer 2 instances durant un deploy (rolling) -> 409.
+   On se soigne automatiquement : stopPolling -> deleteWebhook -> restartPolling
 */
 const bot = new TelegramBot(BOT_TOKEN, { polling: false });
 
-(async () => {
+let pollingStarted = false;
+
+async function startPollingSafe() {
+  if (pollingStarted) return;
+  pollingStarted = true;
+
   try {
     await bot.deleteWebHook({ drop_pending_updates: true });
+  } catch {
+    // ignore
+  }
+
+  try {
+    bot.startPolling({ interval: 300, params: { timeout: 10 } });
+    console.log("✅ Telegram polling démarré");
+  } catch (e) {
+    pollingStarted = false;
+    console.error("❌ startPolling error:", e.message);
+  }
+}
+
+async function restartPollingSafe() {
+  try {
+    pollingStarted = false;
+    try {
+      bot.stopPolling();
+    } catch {}
+    await bot.deleteWebHook({ drop_pending_updates: true });
   } catch {}
-  bot.startPolling({ interval: 300, params: { timeout: 10 } });
-})();
+  await new Promise((r) => setTimeout(r, 1500));
+  await startPollingSafe();
+}
+
+bot.on("polling_error", async (err) => {
+  const msg = err?.message || "";
+  if (msg.includes("409")) {
+    console.error("⚠️ 409 détecté -> redémarrage polling...");
+    await restartPollingSafe();
+    return;
+  }
+  console.error("erreur : [polling_error]", err);
+});
+
+// GO
+startPollingSafe();
 
 function safeStopPolling() {
   try {
@@ -557,7 +596,13 @@ app.listen(PORT, () => console.log(`✅ Web server on :${PORT}`));
 
 /* ================== BOT MENUS ================== */
 async function sendMainMenu(chatId) {
-  return bot.sendMessage(chatId, "🏠 *Menu ShaSitter*\n\nChoisis :", {
+  const title =
+    "━━━━━━━━━━━━━━━━━━\n" +
+    "✨ *ShaSitter — Menu Admin* ✨\n" +
+    "━━━━━━━━━━━━━━━━━━\n\n" +
+    "Choisis une action :";
+
+  return bot.sendMessage(chatId, title, {
     parse_mode: "Markdown",
     ...kb([
       [{ text: "📅 Nouvelle réservation", callback_data: "m_book" }],
@@ -567,7 +612,7 @@ async function sendMainMenu(chatId) {
       [{ text: "👤 Clients", callback_data: "m_clients" }],
       [{ text: "🧾 Prestations", callback_data: "m_prestas" }],
       [{ text: "👩‍💼 Employés", callback_data: "m_emps" }],
-      [{ text: "🌐 Ouvrir Dashboard", url: webAppUrl() }],
+      [{ text: "📱 Dashboard (App)", web_app: { url: webAppUrl() } }],
     ]),
   });
 }
