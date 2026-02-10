@@ -162,6 +162,43 @@ function animalLabel(a) {
   return a === "chat" ? "🐱 Chat" : a === "lapin" ? "🐰 Lapin" : "🐾 Autre";
 }
 
+/* ================== BOOKING HELPERS (AUTO) ================== */
+
+// force array
+function ensureArray(v) {
+  return Array.isArray(v) ? v : [];
+}
+
+// statut intelligent
+function bookingStatus(start, end) {
+  const today = utcTodayISO();
+  if (end < today) return "done";
+  if (start > today) return "confirmed";
+  return "in_progress";
+}
+
+// calcul automatique packs + suppléments
+async function computeBookingTotal({
+  prestation_id,
+  supplement_ids = [],
+  start_date,
+  end_date,
+  slot,
+}) {
+  const days = daysInclusive(start_date, end_date);
+  const slotMult = slot === "matin_soir" ? 2 : 1;
+
+  const main = await dbGetPrestation(prestation_id);
+  let total = Number(main.price_chf) * days * slotMult;
+
+  for (const sid of supplement_ids) {
+    const s = await dbGetPrestation(sid);
+    total += Number(s.price_chf) * days;
+  }
+
+  return money2(total);
+}
+
 /* ================== DB HELPERS ================== */
 async function dbListClients() {
   const { data, error } = await sb.from("clients").select("*").order("id", { ascending: true });
@@ -688,7 +725,12 @@ bot.on("callback_query", async (q) => {
   if (q.data === "m_prestas") return sendPrestationsMenu(chatId);
 
   if (q.data === "m_book") {
-    wBooking.set(chatId, { step: "pick_client", data: {}, history: [] });
+    wBooking.set(chatId, {
+  step: "pick_client",
+  data: { pet_ids: [], supplement_ids: [] },
+  history: [],
+});
+
     return renderBookingStep(chatId);
   }
 
@@ -803,6 +845,24 @@ bot.on("callback_query", async (q) => {
       ...kb([bkNavRow()]),
     });
   }
+if (q.data?.startsWith("bk_presta_")) {
+  const st = getBkState(chatId);
+  if (!st) return;
+
+  const id = Number(q.data.replace("bk_presta_", ""));
+
+  if (!st.data.prestation_id) {
+    st.data.prestation_id = id; // pack principal
+  } else {
+    const sids = ensureArray(st.data.supplement_ids);
+    st.data.supplement_ids = sids.includes(id)
+      ? sids.filter(x => x !== id)
+      : [...sids, id];
+  }
+
+  setBkState(chatId, st);
+  return renderBookingStep(chatId);
+}
 
   if (q.data?.startsWith("bk_pet_")) {
     const st = getBkState(chatId);
@@ -888,7 +948,7 @@ bot.on("callback_query", async (q) => {
       if (days < 1) throw new Error("Dates invalides (fin avant début ?)");
 
       const slotMult = d.slot === "matin_soir" ? 2 : 1;
-      const total = money2(Number(presta.price_chf) * days * slotMult);
+      const total = await computeBookingTotal(d);
 
       const empPercent = d.employee_id ? Number(d.employee_percent || 0) : 0;
       const empPart = d.employee_id ? money2((total * empPercent) / 100) : 0;
@@ -908,10 +968,16 @@ bot.on("callback_query", async (q) => {
         employee_part_chf: empPart,
         company_part_chf: coPart,
         notes: "",
-        status: "confirmed",
+        status: bookingStatus(d.start_date, d.end_date),
       };
 
-      const inserted = await dbInsertBooking(payload);
+      for (const petId of d.pet_ids) {
+  await dbInsertBooking({
+    ...payload,
+    pet_id: petId,
+  });
+}
+
       wBooking.delete(chatId);
 
       return bot.sendMessage(
@@ -1019,9 +1085,36 @@ bot.on("callback_query", async (q) => {
         [{ text: "✏️ Modifier", callback_data: `cl_edit_${c.id}` }],
         [{ text: "🗑️ Supprimer", callback_data: `cl_del_${c.id}` }],
         [{ text: "⬅️ Retour", callback_data: "cl_list" }],
+        [{ text: "🧾 Réservations", callback_data: `cl_bookings_${c.id}` }],
+
       ]),
     });
   }
+if (q.data?.startsWith("cl_bookings_")) {
+  const clientId = Number(q.data.replace("cl_bookings_", ""));
+  const { data, error } = await sb
+    .from("bookings")
+    .select("id, start_date, end_date, prestations(name)")
+    .eq("client_id", clientId);
+    
+if (q.data?.startsWith("cl_book_del_")) {
+  const [, , bid, cid] = q.data.split("_");
+  await sb.from("bookings").delete().eq("id", Number(bid));
+  return bot.sendMessage(chatId, "✅ Réservation supprimée.", kb([[{ text: "⬅️ Retour", callback_data: `cl_open_${cid}` }]]));
+}
+
+  if (error || !data.length) {
+    return bot.sendMessage(chatId, "Aucune réservation.", kb([[{ text: "⬅️ Retour", callback_data: `cl_open_${clientId}` }]]));
+  }
+
+  const rows = data.map(b => [
+    { text: `❌ ${b.prestations.name} (${b.start_date}→${b.end_date})`, callback_data: `cl_book_del_${b.id}_${clientId}` }
+  ]);
+
+  rows.push([{ text: "⬅️ Retour", callback_data: `cl_open_${clientId}` }]);
+
+  return bot.sendMessage(chatId, "🧾 Réservations :", { ...kb(rows) });
+}
 
   if (q.data?.startsWith("cl_del_")) {
     const id = Number(q.data.replace("cl_del_", ""));
@@ -1323,6 +1416,21 @@ bot.on("message", async (msg) => {
           wClient.delete(chatId);
           return bot.sendMessage(chatId, `❌ Ajout client KO: ${e.message}`);
         }
+     if (q.data?.startsWith("bk_pet_")) {
+  const st = getBkState(chatId);
+  if (!st) return;
+
+  const pid = Number(q.data.replace("bk_pet_", ""));
+  const ids = ensureArray(st.data.pet_ids);
+
+  st.data.pet_ids = ids.includes(pid)
+    ? ids.filter(x => x !== pid)
+    : [...ids, pid];
+
+  setBkState(chatId, st);
+  return renderBookingStep(chatId);
+}
+   
       }
     }
 
