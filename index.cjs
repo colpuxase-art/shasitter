@@ -172,11 +172,7 @@ async function dbListEmployees() {
   return data || [];
 }
 async function dbListPetsByClient(clientId) {
-  const { data, error } = await sb
-    .from("pets")
-    .select("*")
-    .eq("client_id", clientId)
-    .order("id", { ascending: true });
+  const { data, error } = await sb.from("pets").select("*").eq("client_id", clientId).order("id", { ascending: true });
   if (error) throw error;
   return data || [];
 }
@@ -268,7 +264,7 @@ app.get("/api/compta/summary", requireAdminWebApp, async (req, res) => {
   try {
     const { data, error } = await sb
       .from("bookings")
-      .select("id,start_date,total_chf,employee_part_chf,company_part_chf,client_id,prestation_id");
+      .select("id,start_date,end_date,total_chf,employee_part_chf,company_part_chf,client_id,pet_id,prestation_id");
     if (error) throw error;
 
     const bookings = data || [];
@@ -395,7 +391,6 @@ async function renderBookingStep(chatId) {
   const d = st.data || {};
   const step = st.step;
 
-  // helpers to display current selection
   const clientName = async () => {
     if (!d.client_id) return "—";
     const { data, error } = await sb.from("clients").select("id,name").eq("id", d.client_id).single();
@@ -415,7 +410,6 @@ async function renderBookingStep(chatId) {
     return `${data.name} (#${data.id})`;
   };
 
-  // STEP 1: pick client
   if (step === "pick_client") {
     const clients = await dbListClients();
     if (!clients.length) {
@@ -430,12 +424,11 @@ async function renderBookingStep(chatId) {
     });
   }
 
-  // STEP 2: pick pet or create
   if (step === "pick_pet") {
     const pets = await dbListPetsByClient(d.client_id);
     const rows = [];
     rows.push([{ text: "➕ Nouveau chat (donner un nom)", callback_data: "bk_pet_new" }]);
-    for (const p of pets.slice(0, 30)) {
+    for (const p of pets.filter((x) => x.active !== false).slice(0, 30)) {
       rows.push([{ text: `🐱 ${p.name} (#${p.id})`, callback_data: `bk_pet_${p.id}` }]);
     }
     rows.push(bkNavRow());
@@ -446,7 +439,6 @@ async function renderBookingStep(chatId) {
     );
   }
 
-  // STEP 3: pick prestation
   if (step === "pick_presta") {
     const prestas = await dbListPrestations();
     if (!prestas.length) {
@@ -454,7 +446,7 @@ async function renderBookingStep(chatId) {
       return bot.sendMessage(chatId, "Aucune prestation. Ajoute une prestation (catalogue) d’abord.");
     }
     const rows = prestas
-      .filter((p) => p.is_active !== false)
+      .filter((p) => p.active !== false)
       .slice(0, 40)
       .map((p) => [
         {
@@ -470,7 +462,6 @@ async function renderBookingStep(chatId) {
     );
   }
 
-  // STEP 4: slot
   if (step === "pick_slot") {
     const rows = [
       [{ text: "🌅 Matin", callback_data: "bk_slot_matin" }],
@@ -485,7 +476,6 @@ async function renderBookingStep(chatId) {
     );
   }
 
-  // STEP 5: start_date (text)
   if (step === "start_date") {
     return bot.sendMessage(
       chatId,
@@ -494,7 +484,6 @@ async function renderBookingStep(chatId) {
     );
   }
 
-  // STEP 6: end_date (text)
   if (step === "end_date") {
     return bot.sendMessage(
       chatId,
@@ -503,19 +492,17 @@ async function renderBookingStep(chatId) {
     );
   }
 
-  // STEP 7: employee optional
   if (step === "pick_employee") {
     const emps = await dbListEmployees();
     const rows = [];
     rows.push([{ text: "Aucun employé", callback_data: "bk_emp_none" }]);
-    for (const e of emps.filter((x) => x.is_active !== false).slice(0, 30)) {
+    for (const e of emps.filter((x) => x.active !== false).slice(0, 30)) {
       rows.push([{ text: `👩‍💼 ${e.name} (#${e.id})`, callback_data: `bk_emp_${e.id}` }]);
     }
     rows.push(bkNavRow());
     return bot.sendMessage(chatId, "7/7 — Assigner un employé ? (optionnel)", { ...kbWrap(rows) });
   }
 
-  // percent (text)
   if (step === "employee_percent") {
     const empTxt = d.employee_id ? `Employé #${d.employee_id}` : "Aucun employé";
     return bot.sendMessage(chatId, `Pourcentage employé (0-100). (Ex: 30)\n\n${empTxt}`, {
@@ -523,9 +510,7 @@ async function renderBookingStep(chatId) {
     });
   }
 
-  // recap confirm
   if (step === "recap") {
-    // compute recap totals (with slot multiplier)
     const { data: presta, error: pErr } = await sb.from("prestations").select("*").eq("id", d.prestation_id).single();
     if (pErr) return bot.sendMessage(chatId, `❌ Prestation introuvable: ${pErr.message}`);
 
@@ -570,9 +555,7 @@ async function renderBookingStep(chatId) {
   }
 }
 
-/* ================== PRESTATION (catalogue) wizard simple ==================
-   (tu peux garder celui-ci ou on le refait 100% boutons après ton SQL)
-*/
+/* ================== PRESTATION (catalogue) wizard simple ================== */
 function prestaAnimalButtons() {
   return [
     [{ text: "🐱 Chat", callback_data: "presta_an_chat" }],
@@ -779,7 +762,6 @@ bot.on("callback_query", async (q) => {
     const d = st.data || {};
 
     try {
-      // Fetch presta for price
       const { data: presta, error: pErr } = await sb.from("prestations").select("*").eq("id", d.prestation_id).single();
       if (pErr) throw pErr;
 
@@ -834,15 +816,9 @@ bot.on("callback_query", async (q) => {
     st.step = prev;
     wPresta.set(chatId, st);
 
-    if (st.step === "animal") {
-      return bot.sendMessage(chatId, "2/6 — Type animal :", { ...kbWrap(prestaAnimalButtons()) });
-    }
-    if (st.step === "visits") {
-      return bot.sendMessage(chatId, "4/6 — Visites par jour :", { ...kbWrap(visitsButtons()) });
-    }
-    if (st.step === "duration") {
-      return bot.sendMessage(chatId, "5/6 — Durée totale par jour :", { ...kbWrap(durationButtons()) });
-    }
+    if (st.step === "animal") return bot.sendMessage(chatId, "2/6 — Type animal :", { ...kbWrap(prestaAnimalButtons()) });
+    if (st.step === "visits") return bot.sendMessage(chatId, "4/6 — Visites par jour :", { ...kbWrap(visitsButtons()) });
+    if (st.step === "duration") return bot.sendMessage(chatId, "5/6 — Durée totale par jour :", { ...kbWrap(durationButtons()) });
     return;
   }
 
@@ -907,7 +883,7 @@ bot.on("message", async (msg) => {
           name: text,
           animal_type: "chat",
           notes: "",
-          is_active: true,
+          active: true,
         });
         pushStep(bk, bk.step);
         bk.data.pet_id = pet.id;
@@ -977,7 +953,7 @@ bot.on("message", async (msg) => {
     if (ps.step === "desc") {
       d.description = text || "";
       d.image_url = "";
-      d.is_active = true;
+      d.active = true;
 
       try {
         const inserted = await dbInsertPrestation(d);
@@ -1014,7 +990,7 @@ bot.on("message", async (msg) => {
     }
     if (cs.step === "notes") {
       d.notes = text === "-" ? "" : text;
-      d.is_active = true;
+      // clients n'a pas "active" dans ton SQL clean, donc on n'envoie rien
       try {
         const inserted = await dbInsertClient(d);
         wClient.delete(chatId);
@@ -1046,7 +1022,7 @@ bot.on("message", async (msg) => {
       const p = Number(text);
       if (!Number.isFinite(p) || p < 0 || p > 100) return bot.sendMessage(chatId, "❌ Mets un nombre 0-100");
       d.default_percent = Math.floor(p);
-      d.is_active = true;
+      d.active = true;
       try {
         const inserted = await dbInsertEmployee(d);
         wEmployee.delete(chatId);
