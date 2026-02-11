@@ -35,60 +35,58 @@ const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE, {
   auth: { persistSession: false },
 });
 
+// Helper global pour éviter ReferenceError
+function visitsMultiplierFromSlot(slot) {
+  return slot === "matin_soir" ? 2 : 1;
+}
+globalThis.visitsMultiplierFromSlot = visitsMultiplierFromSlot;
+
+
 /* ================== ADMIN ================== */
 const ADMIN_IDS = new Set([6675436692]); // <-- ton ID Telegram
 const isAdmin = (chatId) => ADMIN_IDS.has(chatId);
 
-/* ================== TELEGRAM BOT (POLLING SAFE + 409) ==================
+/* ================== TELEGRAM BOT (409 FIX) ==================
    - IMPORTANT: sur Render => WEB_CONCURRENCY=1
-   - Si 409: ça veut dire qu'un autre getUpdates tourne avec le même token.
-     Pendant les déploiements (ou si une vieille instance traîne), on relance
-     le polling proprement au lieu de faire crash.
+   - On force deleteWebhook(drop_pending_updates) puis startPolling
 */
-const bot = new TelegramBot(BOT_TOKEN, { polling: false });
+const bot = new TelegramBot(process.env.BOT_TOKEN, { polling: false });
 
-let _pollingStarting = false;
+async function startTelegram() {
+  // 1) coupe tout webhook éventuel
+  try { await bot.deleteWebHook({ drop_pending_updates: true }); } catch (e) {
+    console.log("deleteWebHook err:", e?.message || e);
+  }
 
-async function startTelegramPolling() {
-  if (_pollingStarting) return;
-  _pollingStarting = true;
+  // 2) démarre le polling proprement
   try {
-    // Coupe tout webhook éventuel
-    try {
-      await bot.deleteWebHook({ drop_pending_updates: true });
-    } catch {}
-
-    // Par sécurité: stop tout polling précédent (évite double start dans le même process)
-    try {
-      await bot.stopPolling();
-    } catch {}
-
-    await bot.startPolling({ restart: true, timeout: 10 });
+    await bot.startPolling({ restart: true });
     console.log("✅ Telegram polling démarré");
   } catch (e) {
-    console.error("❌ startPolling err:", e?.message || e);
-    setTimeout(startTelegramPolling, 2500);
-  } finally {
-    _pollingStarting = false;
+    console.log("❌ startPolling err:", e?.message || e);
+    // retry soft
+    setTimeout(startTelegram, 2500);
   }
 }
 
-bot.on("polling_error", (e) => {
-  const msg = e?.message || String(e || "");
-  console.error("❌ polling_error:", msg);
+startTelegram();
 
-  // 409 conflict: autre getUpdates en cours
-  if (msg.includes("409") || msg.toLowerCase().includes("conflict")) {
-    try {
-      bot.stopPolling();
-    } catch {}
-    setTimeout(startTelegramPolling, 3000);
-  }
+// log des erreurs polling
+bot.on("polling_error", (e) => {
+  console.log("polling_error:", e?.message || e);
 });
 
+startPollingSafe();
+
 // Évite que Node 22 tue le process sur un rejet non géré.
+// On log l'erreur pour debug, et on laisse le service vivre.
 process.on("unhandledRejection", (reason) => {
   console.error("❌ UnhandledRejection:", reason);
+});
+
+// Log utile pour les erreurs de polling (409, etc.)
+bot.on("polling_error", (e) => {
+  console.error("❌ polling_error:", e);
 });
 
 function safeStopPolling() {
@@ -104,8 +102,6 @@ process.on("SIGINT", () => {
   safeStopPolling();
   process.exit(0);
 });
-
-startTelegramPolling();
 
 /* ================== Telegram initData validation (PRIVATE APP) ================== */
 function timingSafeEqual(a, b) {
@@ -1322,6 +1318,30 @@ bot.on("callback_query", async (q) => {
 
   
 // Options (suppléments + ménage) — TOUJOURS UNIQUES (1 seule fois)
+if (q.data?.startsWith("bk_add_")) {
+  const st = getBkState(chatId);
+  if (!st) return;
+  const pid = Number(q.data.replace("bk_add_", ""));
+  const p = await dbGetPrestation(pid);
+
+  if (!(p.category === "supplement" || p.category === "menage")) {
+    return bot.sendMessage(chatId, "❌ Cette prestation n’est pas une option.", kb([[{ text: "⬅️ Retour", callback_data: "bk_back" }]]));
+  }
+
+  st.data.addons = st.data.addons || [];
+  const exists = st.data.addons.some((x) => Number(x.id) === Number(p.id));
+  if (!exists) {
+    st.data.addons.push({
+      id: p.id,
+      name: p.name,
+      total: Number(p.price_chf || 0),
+      category: p.category,
+    });
+  }
+  setBkState(chatId, st);
+  return renderBookingStep(chatId);
+}
+
 if (q.data === "bk_add_prev") {
   const st = getBkState(chatId);
   if (!st) return;
@@ -1335,34 +1355,6 @@ if (q.data === "bk_add_next") {
   st.data._addon_page = Number(st.data._addon_page || 0) + 1;
   setBkState(chatId, st);
   return renderBookingStep(chatId);
-}
-
-// Ajout d'une option (ID uniquement) : bk_add_<id>
-{
-  const m = q.data?.match(/^bk_add_(\d+)$/);
-  if (m) {
-    const st = getBkState(chatId);
-    if (!st) return;
-    const pid = Number(m[1]);
-    const p = await dbGetPrestation(pid);
-
-    if (!(p.category === "supplement" || p.category === "menage")) {
-      return bot.sendMessage(chatId, "❌ Cette prestation n’est pas une option.", kb([[{ text: "⬅️ Retour", callback_data: "bk_back" }]]));
-    }
-
-    st.data.addons = st.data.addons || [];
-    const exists = st.data.addons.some((x) => Number(x.id) === Number(p.id));
-    if (!exists) {
-      st.data.addons.push({
-        id: p.id,
-        name: p.name,
-        total: Number(p.price_chf || 0),
-        category: p.category,
-      });
-    }
-    setBkState(chatId, st);
-    return renderBookingStep(chatId);
-  }
 }
 
 if (q.data === "bk_devis") {
