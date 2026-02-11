@@ -1326,7 +1326,7 @@ bot.on("callback_query", async (q) => {
 
   
 // Options (suppléments + ménage) — TOUJOURS UNIQUES (1 seule fois)
-if (q.data?.startsWith("bk_add_")) {
+if (q.data && /^bk_add_\d+$/.test(q.data)) {
   const st = getBkState(chatId);
   if (!st) return;
   const pid = Number(q.data.replace("bk_add_", ""));
