@@ -45,12 +45,34 @@ const isAdmin = (chatId) => ADMIN_IDS.has(chatId);
 */
 const bot = new TelegramBot(BOT_TOKEN, { polling: false });
 
-(async () => {
+async function startPollingSafe() {
   try {
     await bot.deleteWebHook({ drop_pending_updates: true });
   } catch {}
-  bot.startPolling({ interval: 300, params: { timeout: 10 } });
-})();
+
+  try {
+    // startPolling retourne une Promise (peut rejeter: 409 conflict, réseau, etc.)
+    await bot.startPolling({ interval: 300, params: { timeout: 10 } });
+    console.log("✅ Telegram polling démarré");
+  } catch (e) {
+    console.error("❌ startPolling échoué:", e);
+    // retry (ex: si une autre instance poll encore / conflit 409)
+    setTimeout(startPollingSafe, 2000);
+  }
+}
+
+startPollingSafe();
+
+// Évite que Node 22 tue le process sur un rejet non géré.
+// On log l'erreur pour debug, et on laisse le service vivre.
+process.on("unhandledRejection", (reason) => {
+  console.error("❌ UnhandledRejection:", reason);
+});
+
+// Log utile pour les erreurs de polling (409, etc.)
+bot.on("polling_error", (e) => {
+  console.error("❌ polling_error:", e);
+});
 
 function safeStopPolling() {
   try {
