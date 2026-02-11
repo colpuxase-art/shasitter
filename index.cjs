@@ -703,6 +703,9 @@ function visitsMultiplierFromSlot(slot) {
   return slot === "matin_soir" ? 2 : 1;
 }
 
+// ensure available everywhere
+globalThis.visitsMultiplierFromSlot = visitsMultiplierFromSlot;
+
 function filterPrestations(prestas, { categories, animal_type, visits_per_day }) {
   const cats = Array.isArray(categories) ? categories : (categories ? [categories] : null);
 
@@ -1094,8 +1097,6 @@ bot.on("callback_query", async (q) => {
   if (!chatId) return;
   await answerCbq(q);
 
-  try {
-
   if (!isAdmin(chatId)) return bot.sendMessage(chatId, "⛔ Accès refusé.");
 
   /* ----- GLOBAL NAV ----- */
@@ -1322,6 +1323,30 @@ bot.on("callback_query", async (q) => {
 
   
 // Options (suppléments + ménage) — TOUJOURS UNIQUES (1 seule fois)
+if (q.data?.startsWith("bk_add_")) {
+  const st = getBkState(chatId);
+  if (!st) return;
+  const pid = Number(q.data.replace("bk_add_", ""));
+  const p = await dbGetPrestation(pid);
+
+  if (!(p.category === "supplement" || p.category === "menage")) {
+    return bot.sendMessage(chatId, "❌ Cette prestation n’est pas une option.", kb([[{ text: "⬅️ Retour", callback_data: "bk_back" }]]));
+  }
+
+  st.data.addons = st.data.addons || [];
+  const exists = st.data.addons.some((x) => Number(x.id) === Number(p.id));
+  if (!exists) {
+    st.data.addons.push({
+      id: p.id,
+      name: p.name,
+      total: Number(p.price_chf || 0),
+      category: p.category,
+    });
+  }
+  setBkState(chatId, st);
+  return renderBookingStep(chatId);
+}
+
 if (q.data === "bk_add_prev") {
   const st = getBkState(chatId);
   if (!st) return;
@@ -1346,6 +1371,7 @@ if (q.data === "bk_devis") {
   return renderBookingStep(chatId);
 }
 
+  
 if (q.data === "bk_add_done") {
   const st = getBkState(chatId);
   if (!st) return;
@@ -1355,42 +1381,7 @@ if (q.data === "bk_add_done") {
   return renderBookingStep(chatId);
 }
 
-// Ajout d'une option (supplément / ménage)
-if (q.data && /^bk_add_\d+$/.test(q.data)) {
-  const st = getBkState(chatId);
-  if (!st) return;
-  const pid = Number(q.data.replace("bk_add_", ""));
-  const p = await dbGetPrestation(pid);
-
-  if (!(p?.category === "supplement" || p?.category === "menage")) {
-    return bot.sendMessage(chatId, "❌ Cette prestation n’est pas une option.", kb([[{ text: "⬅️ Retour", callback_data: "bk_back" }]]));
-  }
-
-  // Cas spécial: multi-chat -> demander le nombre de chats (prix UNIQUE, pas par jour)
-  if ((p.name || "").toLowerCase().includes("multi-chat")) {
-    pushStep(st, st.step);
-    st.data._pending_addon = { id: p.id, name: p.name, unit_price: Number(p.price_chf || 0), category: p.category };
-    st.step = "addon_multichat_qty";
-    setBkState(chatId, st);
-    return bot.sendMessage(chatId, "🐱 Combien de chats au total ? (ex: 1, 2, 3...)", { ...kb([bkNavRow()]) });
-  }
-
-  st.data.addons = st.data.addons || [];
-  const exists = st.data.addons.some((x) => Number(x.id) === Number(p.id));
-  if (!exists) {
-    st.data.addons.push({
-      id: p.id,
-      name: p.name,
-      qty: 1,
-      total: Number(p.price_chf || 0),
-      category: p.category,
-    });
-  }
-  setBkState(chatId, st);
-  return renderBookingStep(chatId);
-}
-
-if (q.data === "bk_share_yes") {
+  if (q.data === "bk_share_yes") {
     const st = getBkState(chatId);
     if (!st) return;
     pushStep(st, st.step);
@@ -1528,7 +1519,7 @@ if (q.data === "bk_confirm") {
     const addons = d.addons || [];
     for (const a of addons) {
       const presta = await dbGetPrestation(a.id);
-      const total = money2(Number(a.total ?? presta.price_chf ?? 0)); // unique (peut inclure quantité)
+      const total = money2(Number(presta.price_chf || 0)); // unique
 
       const empPercent = d.employee_id ? Number(d.employee_percent || 0) : 0;
       const empPart = d.employee_id ? money2((total * empPercent) / 100) : 0;
@@ -1892,14 +1883,7 @@ if (q.data === "bk_confirm") {
       ...kb([[{ text: "⬅️ Retour", callback_data: `pre_open_${id}` }]]),
     });
   }
-  } catch (e) {
-    console.error("❌ callback_query KO:", e);
-    try {
-      await bot.sendMessage(chatId, `❌ Erreur: ${e?.message || e}`, kb([[{ text: "⬅️ Menu", callback_data: "back_main" }]]));
-    } catch {}
-  }
 });
-
 
 /* ================== TEXT INPUT HANDLER ================== */
 bot.on("message", async (msg) => {
@@ -1912,42 +1896,6 @@ bot.on("message", async (msg) => {
   const bk = getBkState(chatId);
   if (bk) {
     const d = bk.data || {};
-
-// multi-chat qty (prix UNIQUE, pas par jour) : on facture 10 CHF par chat supplémentaire (au-delà du 1er)
-if (bk.step === "addon_multichat_qty") {
-  const n = parseInt(String(text).trim(), 10);
-  if (!Number.isFinite(n) || n < 1) return bot.sendMessage(chatId, "❌ Envoie un nombre valide (ex: 1, 2, 3...)");
-  const pend = bk.data._pending_addon;
-  if (!pend || !pend.id) {
-    // sécurité
-    bk.step = "addons";
-    setBkState(chatId, bk);
-    return renderBookingStep(chatId);
-  }
-  const extra = Math.max(0, n - 1);
-  // si 1 chat => pas de supplément multi-chat
-  bk.data.addons = bk.data.addons || [];
-  // retirer l'existant si présent
-  bk.data.addons = bk.data.addons.filter((x) => Number(x.id) !== Number(pend.id));
-
-  if (extra > 0) {
-    const total = money2(Number(pend.unit_price || 0) * extra);
-    bk.data.addons.push({
-      id: pend.id,
-      name: `${pend.name} x${extra}`,
-      qty: extra,
-      total,
-      category: pend.category,
-    });
-  }
-
-  delete bk.data._pending_addon;
-  pushStep(bk, bk.step);
-  bk.step = "addons";
-  setBkState(chatId, bk);
-  return renderBookingStep(chatId);
-}
-
 // devis amount / note
 if (bk.step === "devis_amount") {
   const amt = Number(String(text).replace(",", "."));
