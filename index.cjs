@@ -39,6 +39,26 @@ const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE, {
 const ADMIN_IDS = new Set([6675436692]); // <-- ton ID Telegram
 const isAdmin = (chatId) => ADMIN_IDS.has(chatId);
 
+
+/* ================== HELPERS (compat) ==================
+   visitsMultiplierFromSlot was referenced in older flows.
+   - For 'matin_soir', we return 2 ONLY for prestations priced per-visit/service.
+   - For Duo packs (visits_per_day=2) and anything already priced per-day, we keep 1.
+*/
+function visitsMultiplierFromSlot(slot, prestation) {
+  try {
+    if (slot === "matin_soir") {
+      const isDuoPack = prestation && (prestation.visits_per_day === 2) && (prestation.category === "pack");
+      if (isDuoPack) return 1;
+      return 2;
+    }
+    return 1;
+  } catch {
+    return 1;
+  }
+}
+globalThis.visitsMultiplierFromSlot = visitsMultiplierFromSlot;
+
 /* ================== TELEGRAM BOT (409 FIX) ==================
    - IMPORTANT: sur Render => WEB_CONCURRENCY=1
    - On force deleteWebhook(drop_pending_updates) puis startPolling
@@ -150,30 +170,6 @@ const SLOTS = ["matin", "soir", "matin_soir"];
 function slotLabel(s) {
   return s === "matin" ? "🌅 Matin" : s === "soir" ? "🌙 Soir" : "🌅🌙 Matin + soir";
 }
-
-/**
- * Multiplieur de visites selon le créneau.
- * IMPORTANT: les packs "Duo" (visits_per_day=2) sont déjà tarifés "par jour",
- * donc on NE double JAMAIS leur prix.
- * - service (visite) : matin_soir => x2
- * - pack duo : matin_soir => x1 (déjà inclus)
- * - supplement / menage / devis : toujours x1
- *
- * Signature compatible avec l'erreur précédente:
- *   visitsMultiplierFromSlot(slot) fonctionne (fallback).
- *   visitsMultiplierFromSlot(slot, presta) recommandé.
- */
-function visitsMultiplierFromSlot(slot, presta = null) {
-  try {
-    if (presta && (presta.category === "supplement" || presta.category === "menage" || presta.category === "devis")) return 1;
-    if (presta && presta.category === "pack" && Number(presta.visits_per_day || 1) === 2) return 1;
-    return slot === "matin_soir" ? 2 : 1;
-  } catch {
-    return slot === "matin_soir" ? 2 : 1;
-  }
-}
-globalThis.visitsMultiplierFromSlot = visitsMultiplierFromSlot;
-
 function animalLabel(a) {
   return a === "chat" ? "🐱 Chat" : a === "lapin" ? "🐰 Lapin" : "🐾 Autre";
 }
@@ -308,7 +304,8 @@ async function dbGetBooking(id) {
 async function computeBookingTotals(fields) {
   const presta = await dbGetPrestation(fields.prestation_id);
   const days = daysInclusive(fields.start_date, fields.end_date);
-  if (days < 1) throw new Error("Dates invalides (fin avant début ?)");  const slotMult = visitsMultiplierFromSlot(fields.slot, presta);
+  if (days < 1) throw new Error("Dates invalides (fin avant début ?)");
+  const slotMult = fields.slot === "matin_soir" ? 2 : 1;
   const total = money2(Number(presta.price_chf) * days * slotMult);
   const hasEmp = !!fields.employee_id;
   const empPercent = hasEmp ? Number(fields.employee_percent || 0) : 0;
@@ -791,7 +788,9 @@ async function renderBookingStep(chatId) {
   if (step === "recap") {
     const presta = await dbGetPrestation(d.prestation_id);
     const days = daysInclusive(d.start_date, d.end_date);
-    if (days < 1) return bot.sendMessage(chatId, "❌ Dates invalides (fin avant début ?)");    const slotMult = visitsMultiplierFromSlot(d.slot, presta);
+    if (days < 1) return bot.sendMessage(chatId, "❌ Dates invalides (fin avant début ?)");
+
+    const slotMult = d.slot === "matin_soir" ? 2 : 1;
     const total = money2(Number(presta.price_chf) * days * slotMult);
 
     const empPercent = d.employee_id ? Number(d.employee_percent || 0) : 0;
@@ -1026,7 +1025,9 @@ bot.on("callback_query", async (q) => {
     try {
       const presta = await dbGetPrestation(d.prestation_id);
       const days = daysInclusive(d.start_date, d.end_date);
-      if (days < 1) throw new Error("Dates invalides (fin avant début ?)");    const slotMult = visitsMultiplierFromSlot(d.slot, presta);
+      if (days < 1) throw new Error("Dates invalides (fin avant début ?)");
+
+      const slotMult = d.slot === "matin_soir" ? 2 : 1;
       const total = money2(Number(presta.price_chf) * days * slotMult);
 
       const empPercent = d.employee_id ? Number(d.employee_percent || 0) : 0;
