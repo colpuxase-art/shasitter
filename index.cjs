@@ -1319,8 +1319,13 @@ bot.on("callback_query", async (q) => {
 if (q.data?.startsWith("bk_add_")) {
   const st = getBkState(chatId);
   if (!st) return;
-  const pid = Number(q.data.replace("bk_add_", ""));
-  const p = await dbGetPrestation(pid);
+  const raw = q.data.replace("bk_add_", "");
+  // bk_add_prev / bk_add_next / bk_add_done doivent être gérés plus bas
+  if (!/^\d+$/.test(raw)) {
+    // pas un id numérique -> on laisse tomber ici
+  } else {
+    const pid = Number(raw);
+    const p = await dbGetPrestation(pid);
 
   if (!(p.category === "supplement" || p.category === "menage")) {
     return bot.sendMessage(chatId, "❌ Cette prestation n’est pas une option.", kb([[{ text: "⬅️ Retour", callback_data: "bk_back" }]]));
@@ -1338,6 +1343,7 @@ if (q.data?.startsWith("bk_add_")) {
   }
   setBkState(chatId, st);
   return renderBookingStep(chatId);
+  }
 }
 
 if (q.data === "bk_add_prev") {
