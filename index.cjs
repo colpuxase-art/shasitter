@@ -399,20 +399,35 @@ app.get("/api/bookings/:id", requireAdminWebApp, async (req, res) => {
 });
 
 // ✅ Modifier une réservation (dashboard: à venir / passées / client)
+
 app.put("/api/bookings/:id", requireAdminWebApp, async (req, res) => {
   try {
     const id = Number(req.params.id);
     if (!Number.isFinite(id)) return res.status(400).json({ error: "bad_request" });
 
-    const { prestation_id, slot, start_date, end_date, employee_id, employee_percent } = req.body || {};
-    if (!prestation_id || !slot || !start_date || !end_date) return res.status(400).json({ error: "bad_request" });
+    const { prestation_id, slot, start_date, end_date, employee_id, employee_percent, total_override } = req.body || {};
+    if (!prestation_id || !start_date || !end_date) return res.status(400).json({ error: "bad_request" });
 
     const presta = await dbGetPrestation(Number(prestation_id));
     const days = daysInclusive(start_date, end_date);
     if (days < 1) return res.status(400).json({ error: "bad_dates" });
 
-    // ✅ PAS de x2: Duo déjà par jour
-    const baseTotal = money2(Number(presta.price_chf) * days);
+    // Calcul total selon catégorie
+    let baseTotal = 0;
+    const price = Number(presta.price_chf || 0);
+
+    if (presta.category === "pack") {
+      baseTotal = money2(price * days);
+    } else if (presta.category === "service") {
+      const mult = slot === "matin_soir" ? 2 : 1;
+      baseTotal = money2(price * days * mult);
+    } else if (presta.category === "devis") {
+      const ov = Number(String(total_override ?? "").replace(",", "."));
+      baseTotal = Number.isFinite(ov) && ov >= 0 ? money2(ov) : money2(price);
+    } else {
+      // supplement / menage -> unique
+      baseTotal = money2(price);
+    }
 
     const empId = employee_id ? Number(employee_id) : null;
     const empPct = empId ? Math.max(0, Math.min(100, Number(employee_percent || 0))) : 0;
@@ -421,10 +436,10 @@ app.put("/api/bookings/:id", requireAdminWebApp, async (req, res) => {
 
     const payload = {
       prestation_id: Number(prestation_id),
-      slot,
+      slot: slot || null,
       start_date,
       end_date,
-      days_count: days,
+      days_count: presta.category === "pack" || presta.category === "service" ? days : 1,
       total_chf: baseTotal,
       employee_id: empId,
       employee_percent: empId ? empPct : 0,
@@ -440,7 +455,6 @@ app.put("/api/bookings/:id", requireAdminWebApp, async (req, res) => {
     res.status(500).json({ error: "db_error", message: e.message });
   }
 });
-
 // fallback: si ton front ne peut pas faire DELETE
 app.post("/api/bookings/delete", requireAdminWebApp, async (req, res) => {
   try {
@@ -641,63 +655,94 @@ async function renderBookingStep(chatId) {
     return slot === "matin_soir" ? 2 : 1;
   }
 
-  function filterPrestations(prestas, { category, animal_type, visits_per_day }) {
-    return (prestas || []).filter((p) => {
-      if (!p.active) return false;
-      if (category && p.category !== category) return false;
-      if (animal_type && !(p.animal_type === animal_type || p.animal_type === "autre")) return false;
-      if (visits_per_day && Number(p.visits_per_day) !== Number(visits_per_day)) return false;
-      return true;
-    });
+  
+function needVisitsFromSlot(slot) {
+  return slot === "matin_soir" ? 2 : 1;
+}
+
+function visitsMultiplierFromSlot(slot) {
+  return slot === "matin_soir" ? 2 : 1;
+}
+
+function filterPrestations(prestas, { categories, animal_type, visits_per_day }) {
+  const cats = Array.isArray(categories) ? categories : (categories ? [categories] : null);
+
+  return (prestas || []).filter((p) => {
+    if (!p.active) return false;
+
+    if (cats && !cats.includes(p.category)) return false;
+
+    // animal filter (autre = compatible)
+    if (animal_type && !(p.animal_type === animal_type || p.animal_type === "autre")) return false;
+
+    // visits_per_day only applies to PACKS
+    if (visits_per_day && p.category === "pack" && Number(p.visits_per_day) !== Number(visits_per_day)) return false;
+
+    return true;
+  });
+}
+
+async function renderPrestaPicker(title, storeKey, { categories, animal_type, visits_per_day }) {
+  const all = await dbListPrestations(true);
+
+  const list = filterPrestations(all, { categories, animal_type, visits_per_day });
+
+  if (!list.length) {
+    return bot.sendMessage(
+      chatId,
+      `❌ Aucune prestation trouvée.\n\nFiltres: ${(Array.isArray(categories) ? categories.join(",") : (categories || "—"))} / ${animalLabel(animal_type || "autre")} / ${visits_per_day || "—"} visite(s)`,
+      { ...kb([bkNavRow()]) }
+    );
   }
 
-  async function renderPrestaPicker(title, storeKey, { category, animal_type, visits_per_day }) {
-    const all = await dbListPrestations(true);
+  const pageSize = 10;
+  d._presta_page = Number(d._presta_page || 0);
+  const totalPages = Math.max(1, Math.ceil(list.length / pageSize));
+  if (d._presta_page > totalPages - 1) d._presta_page = totalPages - 1;
+  if (d._presta_page < 0) d._presta_page = 0;
 
-    const list = filterPrestations(all, { category, animal_type, visits_per_day });
+  d._presta_ctx = { title, storeKey, categories, animal_type, visits_per_day };
+  setBkState(chatId, st);
 
-    if (!list.length) {
-      return bot.sendMessage(
-        chatId,
-        `❌ Aucune prestation trouvée.\n\nFiltres: ${category || "—"} / ${animalLabel(animal_type || "autre")} / ${visits_per_day || "—"} visite(s)`,
-        { ...kb([bkNavRow()]) }
-      );
-    }
+  const slice = list.slice(d._presta_page * pageSize, d._presta_page * pageSize + pageSize);
 
-    const pageSize = 10;
-    d._presta_page = Number(d._presta_page || 0);
-    const totalPages = Math.max(1, Math.ceil(list.length / pageSize));
-    if (d._presta_page > totalPages - 1) d._presta_page = totalPages - 1;
-    if (d._presta_page < 0) d._presta_page = 0;
+  const rows = slice.map((p) => {
+    const badge =
+      p.category === "pack" ? "📦" :
+      p.category === "service" ? "🧾" :
+      p.category === "menage" ? "🧼" :
+      p.category === "supplement" ? "🧶" :
+      p.category === "devis" ? "🧾" : "🧾";
+    const extra = p.category === "pack" ? `(${p.visits_per_day} visite/j)` : (p.category === "service" ? `(${p.duration_min} min)` : "");
+    return [{ text: `${badge} ${p.name} ${extra} • ${p.price_chf} CHF`, callback_data: `bk_pickpresta_${p.id}` }];
+  });
 
-    d._presta_ctx = { title, storeKey, category, animal_type, visits_per_day };
-    setBkState(chatId, st);
+  const nav = [];
+  if (d._presta_page > 0) nav.push({ text: "⬅️", callback_data: "bk_preva" });
+  nav.push({ text: `Page ${d._presta_page + 1}/${totalPages}`, callback_data: "noop" });
+  if (d._presta_page < totalPages - 1) nav.push({ text: "➡️", callback_data: "bk_nexta" });
+  rows.push(nav);
 
-    const slice = list.slice(d._presta_page * pageSize, d._presta_page * pageSize + pageSize);
+  rows.push(bkNavRow());
 
-    const rows = slice.map((p) => [{ text: `🧾 ${p.name} • ${p.price_chf} CHF`, callback_data: `bk_pickpresta_${p.id}` }]);
+  return bot.sendMessage(chatId, title, { parse_mode: "Markdown", ...kb(rows) });
+}
 
-    const nav = [];
-    if (d._presta_page > 0) nav.push({ text: "⬅️", callback_data: "bk_preva" });
-    nav.push({ text: `Page ${d._presta_page + 1}/${totalPages}`, callback_data: "noop" });
-    if (d._presta_page < totalPages - 1) nav.push({ text: "➡️", callback_data: "bk_nexta" });
-    rows.push(nav);
+  
+function addonsTotal() {
+  const arr = d.addons || [];
+  return money2(arr.reduce((a, x) => a + Number(x.total || 0), 0));
+}
 
-    rows.push(bkNavRow());
+function addonsText() {
+  const arr = d.addons || [];
+  if (!arr.length) return "— Aucun";
+  return arr.map((x) => `• ${x.name} = ${money2(x.total)} CHF`).join("\n");
+}
 
-    return bot.sendMessage(chatId, title, { parse_mode: "Markdown", ...kb(rows) });
-  }
-
-  function supplementsTotal() {
-    const arr = d.supplements || [];
-    return money2(arr.reduce((a, x) => a + Number(x.total || 0), 0));
-  }
-
-  function supplementsText() {
-    const arr = d.supplements || [];
-    if (!arr.length) return "— Aucun";
-    return arr.map((x) => `• ${x.name} x${x.qty} = ${money2(x.total)} CHF`).join("\n");
-  }
+function devisTotal() {
+  return money2(Number(d.devis_amount || 0));
+}
 
   function buildSegments() {
     const start = d.start_date;
@@ -825,7 +870,7 @@ async function renderBookingStep(chatId) {
     return renderPrestaPicker(
       `6/9 — Choisis la prestation (packs)\n\nBesoin: *${visits} visite(s)*\nAnimal: *${animalLabel(animal_type || "autre")}*`,
       "prestation_single_day",
-      { category: "pack", animal_type, visits_per_day: visits }
+      { categories: ["pack","service"], animal_type, visits_per_day: visits }
     );
   }
 
@@ -834,7 +879,7 @@ async function renderBookingStep(chatId) {
     return renderPrestaPicker(
       `7/9 — Prestation pour les *jours complets* (matin+soir)\nAnimal: *${animalLabel(animal_type || "autre")}*`,
       "prestation_full",
-      { category: "pack", animal_type, visits_per_day: 2 }
+      { categories: ["pack","service"], animal_type, visits_per_day: 2 }
     );
   }
 
@@ -843,7 +888,7 @@ async function renderBookingStep(chatId) {
     return renderPrestaPicker(
       `7/9 — Prestation pour un *Matin seul* (1 visite)\nAnimal: *${animalLabel(animal_type || "autre")}*`,
       "prestation_matin",
-      { category: "pack", animal_type, visits_per_day: 1 }
+      { categories: ["pack","service"], animal_type, visits_per_day: 1 }
     );
   }
 
@@ -852,24 +897,59 @@ async function renderBookingStep(chatId) {
     return renderPrestaPicker(
       `7/9 — Prestation pour un *Soir seul* (1 visite)\nAnimal: *${animalLabel(animal_type || "autre")}*`,
       "prestation_soir",
-      { category: "pack", animal_type, visits_per_day: 1 }
+      { categories: ["pack","service"], animal_type, visits_per_day: 1 }
     );
   }
 
-  // supplements
-  if (step === "supplements") {
-    const all = await dbListPrestations(true);
-    const sups = (all || []).filter((p) => p.category === "supplement" && p.active);
+  
+// addons (suppléments + ménage) + devis en plus
+if (step === "addons") {
+  const all = await dbListPrestations(true);
+  const addons = (all || []).filter((p) => (p.category === "supplement" || p.category === "menage") && p.active);
 
-    const rows = sups.slice(0, 20).map((p) => [{ text: `➕ ${p.name} • ${p.price_chf} CHF`, callback_data: `bk_sup_${p.id}` }]);
-    rows.push([{ text: "✅ Terminer suppléments", callback_data: "bk_sup_done" }]);
-    rows.push(bkNavRow());
+  const pageSize = 10;
+  d._addon_page = Number(d._addon_page || 0);
+  const totalPages = Math.max(1, Math.ceil(addons.length / pageSize));
+  if (d._addon_page > totalPages - 1) d._addon_page = totalPages - 1;
+  if (d._addon_page < 0) d._addon_page = 0;
 
-    return bot.sendMessage(chatId, `🧶 *Suppléments*\n\nSélection actuelle:\n${supplementsText()}`, {
-      parse_mode: "Markdown",
-      ...kb(rows),
-    });
-  }
+  const slice = addons.slice(d._addon_page * pageSize, d._addon_page * pageSize + pageSize);
+
+  const rows = slice.map((p) => {
+    const badge = p.category === "menage" ? "🧼" : "🧶";
+    return [{ text: `➕ ${badge} ${p.name} • ${p.price_chf} CHF`, callback_data: `bk_add_${p.id}` }];
+  });
+
+  const nav = [];
+  if (d._addon_page > 0) nav.push({ text: "⬅️", callback_data: "bk_add_prev" });
+  nav.push({ text: `Page ${d._addon_page + 1}/${totalPages}`, callback_data: "noop" });
+  if (d._addon_page < totalPages - 1) nav.push({ text: "➡️", callback_data: "bk_add_next" });
+  if (nav.length) rows.push(nav);
+
+  rows.push([{ text: "🧾 Ajouter un devis personnalisé", callback_data: "bk_devis" }]);
+  rows.push([{ text: "✅ Terminer (options)", callback_data: "bk_add_done" }]);
+  rows.push(bkNavRow());
+
+  const devisLine = Number(d.devis_amount || 0) > 0 ? `\n🧾 Devis: *${money2(d.devis_amount)} CHF*` : "";
+  return bot.sendMessage(chatId, `🧩 *Options (uniques)*\n\nSélection actuelle:\n${addonsText()}${devisLine}`, {
+    parse_mode: "Markdown",
+    ...kb(rows),
+  });
+}
+
+if (step === "devis_amount") {
+  return bot.sendMessage(chatId, "🧾 Entre le *montant du devis* (CHF). Ex: 120", {
+    parse_mode: "Markdown",
+    ...kb([bkNavRow()]),
+  });
+}
+
+if (step === "devis_note") {
+  return bot.sendMessage(chatId, "📝 Note devis (ou envoie - pour ignorer)", {
+    parse_mode: "Markdown",
+    ...kb([bkNavRow()]),
+  });
+}
 
   // share employee?
   if (step === "share_employee") {
@@ -899,57 +979,72 @@ async function renderBookingStep(chatId) {
   }
 
   // recap
-  if (step === "recap") {
-    try {
-      const segs = buildSegments();
-      const supT = supplementsTotal();
+  
+// recap
+if (step === "recap") {
+  try {
+    const segs = buildSegments();
 
-      let total = 0;
-      const lines = [];
-      for (const seg of segs) {
-        const presta = await dbGetPrestation(seg.prestation_id);
-        const days = daysInclusive(seg.start_date, seg.end_date);
-        const t = money2(Number(presta.price_chf) * days);
-        total += t;
-        lines.push(`• ${seg.start_date}→${seg.end_date} — *${slotLabel(seg.slot)}* — ${presta.name} — *${t} CHF*`);
-      }
-      total = money2(total + supT);
+    let total = 0;
+    const lines = [];
 
-      const empPercent = d.employee_id ? Number(d.employee_percent || 0) : 0;
-      const empPart = d.employee_id ? money2((total * empPercent) / 100) : 0;
-      const coPart = d.employee_id ? money2(total - empPart) : total;
+    for (const seg of segs) {
+      const presta = await dbGetPrestation(seg.prestation_id);
+      const days = daysInclusive(seg.start_date, seg.end_date);
 
-      d.total_chf = total;
-      d.employee_part_chf = empPart;
-      d.company_part_chf = coPart;
-      setBkState(chatId, st);
+      let t = 0;
+      if (presta.category === "pack") t = money2(Number(presta.price_chf) * days);
+      else if (presta.category === "service") t = money2(Number(presta.price_chf) * days * visitsMultiplierFromSlot(seg.slot));
+      else t = money2(Number(presta.price_chf) || 0);
 
-      const empLine = d.employee_id ? `Employé: *${empPercent}%* → *${empPart} CHF*` : `Employé: *aucun*`;
+      total += t;
 
-      return bot.sendMessage(
-        chatId,
-        `🧾 *Récapitulatif*\n\n` +
-          `Client: *${await clientTxt()}*\n` +
-          `Animal: *${await petTxt()}*\n` +
-          `Période: *${d.start_date} → ${d.end_date}*\n\n` +
-          `📌 *Découpage*\n${lines.join("\n")}\n\n` +
-          `🧶 Suppléments: *${supT} CHF*\n\n` +
-          `Total: *${total} CHF*\n` +
-          `${empLine}\n` +
-          `ShaSitter: *${coPart} CHF*`,
-        {
-          parse_mode: "Markdown",
-          ...kb([
-            [{ text: "✅ Confirmer", callback_data: "bk_confirm" }],
-            [{ text: "⬅️ Retour (modifier)", callback_data: "bk_back" }],
-            [{ text: "❌ Annuler", callback_data: "bk_cancel" }],
-          ]),
-        }
-      );
-    } catch (e) {
-      return bot.sendMessage(chatId, `❌ Erreur: ${e.message}`, { ...kb([bkNavRow()]) });
+      const multTxt = presta.category === "service" ? ` (x${visitsMultiplierFromSlot(seg.slot)}/jour)` : "";
+      lines.push(`• ${seg.start_date}→${seg.end_date} — *${slotLabel(seg.slot)}* — ${presta.name}${multTxt} — *${t} CHF*`);
     }
+
+    const optT = addonsTotal();
+    const dvT = devisTotal();
+    total = money2(total + optT + dvT);
+
+    const empPercent = d.employee_id ? Number(d.employee_percent || 0) : 0;
+    const empPart = d.employee_id ? money2((total * empPercent) / 100) : 0;
+    const coPart = d.employee_id ? money2(total - empPart) : total;
+
+    d.total_chf = total;
+    d.employee_part_chf = empPart;
+    d.company_part_chf = coPart;
+    setBkState(chatId, st);
+
+    const empLine = d.employee_id ? `Employé: *${empPercent}%* → *${empPart} CHF*` : `Employé: *aucun*`;
+
+    const devisLine = dvT > 0 ? `🧾 Devis: *${dvT} CHF*` : `🧾 Devis: —`;
+
+    return bot.sendMessage(
+      chatId,
+      `🧾 *Récapitulatif*\n\n` +
+        `Client: *${await clientTxt()}*\n` +
+        `Animal: *${await petTxt()}*\n` +
+        `Période: *${d.start_date} → ${d.end_date}*\n\n` +
+        `📌 *Découpage*\n${lines.join("\n")}\n\n` +
+        `🧩 Options: *${optT} CHF*\n` +
+        `${devisLine}\n\n` +
+        `Total: *${total} CHF*\n` +
+        `${empLine}\n` +
+        `ShaSitter: *${coPart} CHF*`,
+      {
+        parse_mode: "Markdown",
+        ...kb([
+          [{ text: "✅ Confirmer", callback_data: "bk_confirm" }],
+          [{ text: "⬅️ Retour (modifier)", callback_data: "bk_back" }],
+          [{ text: "❌ Annuler", callback_data: "bk_cancel" }],
+        ]),
+      }
+    );
+  } catch (e) {
+    return bot.sendMessage(chatId, `❌ Erreur: ${e.message}`, { ...kb([bkNavRow()]) });
   }
+}
 }
 /* ================== /start ================== */
 bot.onText(/\/start/, (msg) => sendMainMenu(msg.chat.id));
@@ -1131,13 +1226,13 @@ bot.on("callback_query", async (q) => {
     const needS = st.data.slot_start === "soir" || st.data.slot_end === "soir";
 
     if (st.step === "pick_presta_single_day") {
-      st.step = "supplements";
+      st.step = "addons";
     } else if (st.step === "pick_presta_full") {
-      st.step = needM ? "pick_presta_matin" : (needS ? "pick_presta_soir" : "supplements");
+      st.step = needM ? "pick_presta_matin" : (needS ? "pick_presta_soir" : "addons");
     } else if (st.step === "pick_presta_matin") {
-      st.step = needS ? "pick_presta_soir" : "supplements";
+      st.step = needS ? "pick_presta_soir" : "addons";
     } else if (st.step === "pick_presta_soir") {
-      st.step = "supplements";
+      st.step = "addons";
     }
 
     setBkState(chatId, st);
@@ -1184,46 +1279,65 @@ bot.on("callback_query", async (q) => {
     return renderBookingStep(chatId);
   }
 
-  // Suppléments
-  if (q.data?.startsWith("bk_sup_")) {
-    const st = getBkState(chatId);
-    if (!st) return;
-    const sid = Number(q.data.replace("bk_sup_", ""));
-    const sup = await dbGetPrestation(sid);
+  
+// Options (suppléments + ménage) — TOUJOURS UNIQUES (1 seule fois)
+if (q.data?.startsWith("bk_add_")) {
+  const st = getBkState(chatId);
+  if (!st) return;
+  const pid = Number(q.data.replace("bk_add_", ""));
+  const p = await dbGetPrestation(pid);
 
-    st.data.supplements = st.data.supplements || [];
-
-    // ⚠️ Selon ta demande :
-    // - par_chat => demander nb chats
-    // - par_action => demander qty
-    // - par_jour => traité comme unique (PAS multiplié par jours)
-    // - unique => qty=1
-    const bt = sup.billing_type;
-
-    if (bt === "unique" || bt === "par_jour") {
-      st.data.supplements.push({ id: sup.id, name: sup.name, qty: 1, unit: Number(sup.price_chf), total: Number(sup.price_chf) });
-      setBkState(chatId, st);
-      return renderBookingStep(chatId);
-    }
-
-    st.data._pending_sup = { id: sup.id, name: sup.name, unit: Number(sup.price_chf), billing_type: bt };
-    setBkState(chatId, st);
-
-    if (bt === "par_chat") {
-      return bot.sendMessage(chatId, `🐱 Combien de chats pour *${sup.name}* ? (ex: 2)`, { parse_mode: "Markdown", ...kb([bkNavRow()]) });
-    }
-    // par_action
-    return bot.sendMessage(chatId, `Quantité pour *${sup.name}* ? (ex: 1, 2, 3)`, { parse_mode: "Markdown", ...kb([bkNavRow()]) });
+  if (!(p.category === "supplement" || p.category === "menage")) {
+    return bot.sendMessage(chatId, "❌ Cette prestation n’est pas une option.", kb([[{ text: "⬅️ Retour", callback_data: "bk_back" }]]));
   }
 
-  if (q.data === "bk_sup_done") {
-    const st = getBkState(chatId);
-    if (!st) return;
-    pushStep(st, st.step);
-    st.step = "share_employee";
-    setBkState(chatId, st);
-    return renderBookingStep(chatId);
+  st.data.addons = st.data.addons || [];
+  const exists = st.data.addons.some((x) => Number(x.id) === Number(p.id));
+  if (!exists) {
+    st.data.addons.push({
+      id: p.id,
+      name: p.name,
+      total: Number(p.price_chf || 0),
+      category: p.category,
+    });
   }
+  setBkState(chatId, st);
+  return renderBookingStep(chatId);
+}
+
+if (q.data === "bk_add_prev") {
+  const st = getBkState(chatId);
+  if (!st) return;
+  st.data._addon_page = Number(st.data._addon_page || 0) - 1;
+  setBkState(chatId, st);
+  return renderBookingStep(chatId);
+}
+if (q.data === "bk_add_next") {
+  const st = getBkState(chatId);
+  if (!st) return;
+  st.data._addon_page = Number(st.data._addon_page || 0) + 1;
+  setBkState(chatId, st);
+  return renderBookingStep(chatId);
+}
+
+if (q.data === "bk_devis") {
+  const st = getBkState(chatId);
+  if (!st) return;
+  pushStep(st, st.step);
+  st.step = "devis_amount";
+  setBkState(chatId, st);
+  return renderBookingStep(chatId);
+}
+
+  
+if (q.data === "bk_add_done") {
+  const st = getBkState(chatId);
+  if (!st) return;
+  pushStep(st, st.step);
+  st.step = "share_employee";
+  setBkState(chatId, st);
+  return renderBookingStep(chatId);
+}
 
   if (q.data === "bk_share_yes") {
     const st = getBkState(chatId);
@@ -1266,120 +1380,183 @@ bot.on("callback_query", async (q) => {
     return renderBookingStep(chatId);
   }
 
-  if (q.data === "bk_confirm") {
-    const st = getBkState(chatId);
-    if (!st) return;
-    const d = st.data || {};
+  
+if (q.data === "bk_confirm") {
+  const st = getBkState(chatId);
+  if (!st) return;
+  const d = st.data || {};
 
-    function supplementsTotal() {
-      const arr = d.supplements || [];
-      return money2(arr.reduce((a, x) => a + Number(x.total || 0), 0));
+  function buildSegments() {
+    const start = d.start_date;
+    const end = d.end_date;
+    const nDays = daysInclusive(start, end);
+    if (nDays < 1) throw new Error("Dates invalides (fin avant début ?)");
+
+    // 1 jour
+    if (nDays === 1) {
+      if (!d.slot_single || !d.prestation_single_day) throw new Error("Infos manquantes (slot/prestation)");
+      return [{ slot: d.slot_single, start_date: start, end_date: end, prestation_id: d.prestation_single_day }];
     }
 
-    function buildSegments() {
-      const start = d.start_date;
-      const end = d.end_date;
-      const nDays = daysInclusive(start, end);
-      if (nDays < 1) throw new Error("Dates invalides (fin avant début ?)");
+    // multi jours
+    if (!d.slot_start || !d.slot_end || !d.prestation_full) throw new Error("Infos manquantes (slots/prestations)");
 
-      // 1 jour
-      if (nDays === 1) {
-        if (!d.slot_single || !d.prestation_single_day) throw new Error("Infos manquantes (slot/prestation)");
-        return [
-          { slot: d.slot_single, start_date: start, end_date: end, prestation_id: d.prestation_single_day },
-        ];
-      }
+    const segs = [];
 
-      // multi jours
-      if (!d.slot_start || !d.slot_end || !d.prestation_full) throw new Error("Infos manquantes (slots/prestations)");
+    // day1
+    if (d.slot_start === "matin") segs.push({ slot: "matin", start_date: start, end_date: start, prestation_id: d.prestation_matin });
+    if (d.slot_start === "soir") segs.push({ slot: "soir", start_date: start, end_date: start, prestation_id: d.prestation_soir });
+    if (d.slot_start === "matin_soir") segs.push({ slot: "matin_soir", start_date: start, end_date: start, prestation_id: d.prestation_full });
 
-      const segs = [];
+    // middle full-days
+    const midStart = addDaysISO(start, 1);
+    const midEnd = addDaysISO(end, -1);
+    const midDays = daysInclusive(midStart, midEnd);
+    if (midDays >= 1) segs.push({ slot: "matin_soir", start_date: midStart, end_date: midEnd, prestation_id: d.prestation_full });
 
-      // day1
-      if (d.slot_start === "matin") segs.push({ slot: "matin", start_date: start, end_date: start, prestation_id: d.prestation_matin });
-      if (d.slot_start === "soir") segs.push({ slot: "soir", start_date: start, end_date: start, prestation_id: d.prestation_soir });
-      if (d.slot_start === "matin_soir") segs.push({ slot: "matin_soir", start_date: start, end_date: start, prestation_id: d.prestation_full });
+    // last day
+    if (d.slot_end === "matin") segs.push({ slot: "matin", start_date: end, end_date: end, prestation_id: d.prestation_matin });
+    if (d.slot_end === "soir") segs.push({ slot: "soir", start_date: end, end_date: end, prestation_id: d.prestation_soir });
+    if (d.slot_end === "matin_soir") segs.push({ slot: "matin_soir", start_date: end, end_date: end, prestation_id: d.prestation_full });
 
-      // middle full-days
-      const midStart = addDaysISO(start, 1);
-      const midEnd = addDaysISO(end, -1);
-      const midDays = daysInclusive(midStart, midEnd);
-      if (midDays >= 1) segs.push({ slot: "matin_soir", start_date: midStart, end_date: midEnd, prestation_id: d.prestation_full });
+    // sécurités
+    for (const s of segs) {
+      if (!s.prestation_id) throw new Error("Prestation manquante pour un segment");
+    }
+    return segs;
+  }
 
-      // last day
-      if (d.slot_end === "matin") segs.push({ slot: "matin", start_date: end, end_date: end, prestation_id: d.prestation_matin });
-      if (d.slot_end === "soir") segs.push({ slot: "soir", start_date: end, end_date: end, prestation_id: d.prestation_soir });
-      if (d.slot_end === "matin_soir") segs.push({ slot: "matin_soir", start_date: end, end_date: end, prestation_id: d.prestation_full });
+  async function computeLineTotal(presta, days, slot) {
+    const price = Number(presta.price_chf || 0);
+    if (presta.category === "pack") return money2(price * days); // prix pack déjà "par jour"
+    if (presta.category === "service") return money2(price * days * visitsMultiplierFromSlot(slot)); // service = par visite
+    // options/devis: unique
+    return money2(price);
+  }
 
-      // sécurités
-      for (const s of segs) {
-        if (s.slot !== "matin_soir" && !s.prestation_id) throw new Error("Prestation manquante pour matin/soir");
-      }
-      return segs;
+  try {
+    const group_id = crypto.randomUUID();
+    const segs = buildSegments();
+
+    const created = [];
+
+    // 1) segments (pack/service)
+    for (const seg of segs) {
+      const presta = await dbGetPrestation(seg.prestation_id);
+      const days = daysInclusive(seg.start_date, seg.end_date);
+      if (days < 1) continue;
+
+      const total = await computeLineTotal(presta, days, seg.slot);
+
+      const empPercent = d.employee_id ? Number(d.employee_percent || 0) : 0;
+      const empPart = d.employee_id ? money2((total * empPercent) / 100) : 0;
+      const coPart = d.employee_id ? money2(total - empPart) : total;
+
+      const payload = {
+        group_id,
+        client_id: d.client_id,
+        pet_id: d.pet_id || null,
+        prestation_id: seg.prestation_id,
+        slot: seg.slot,
+        start_date: seg.start_date,
+        end_date: seg.end_date,
+        days_count: days,
+        total_chf: total,
+        employee_id: d.employee_id || null,
+        employee_percent: d.employee_id ? empPercent : 0,
+        employee_part_chf: empPart,
+        company_part_chf: coPart,
+        notes: d.notes || "",
+        status: "confirmed",
+      };
+
+      created.push(await dbInsertBooking(payload));
     }
 
-    try {
-      const segs = buildSegments();
-      const supTotal = supplementsTotal();
+    // 2) options uniques (suppléments + ménage)
+    const addons = d.addons || [];
+    for (const a of addons) {
+      const presta = await dbGetPrestation(a.id);
+      const total = money2(Number(presta.price_chf || 0)); // unique
 
-      const created = [];
-      for (let i = 0; i < segs.length; i++) {
-        const seg = segs[i];
-        const presta = await dbGetPrestation(seg.prestation_id);
+      const empPercent = d.employee_id ? Number(d.employee_percent || 0) : 0;
+      const empPart = d.employee_id ? money2((total * empPercent) / 100) : 0;
+      const coPart = d.employee_id ? money2(total - empPart) : total;
 
-        const days = daysInclusive(seg.start_date, seg.end_date);
-        if (days < 1) continue;
+      const payload = {
+        group_id,
+        client_id: d.client_id,
+        pet_id: d.pet_id || null,
+        prestation_id: presta.id,
+        slot: null,
+        start_date: d.start_date,
+        end_date: d.end_date,
+        days_count: 1,
+        total_chf: total,
+        employee_id: d.employee_id || null,
+        employee_percent: d.employee_id ? empPercent : 0,
+        employee_part_chf: empPart,
+        company_part_chf: coPart,
+        notes: "",
+        status: "confirmed",
+      };
 
-        // ✅ IMPORTANT: prix pack Duo déjà "par jour" => PAS de x2
-        let total = money2(Number(presta.price_chf) * days);
+      created.push(await dbInsertBooking(payload));
+    }
 
-        // Suppléments: ajoutés une seule fois sur le premier segment (total final correct)
-        if (i === 0) total = money2(total + supTotal);
+    // 3) devis personnalisé (unique, montant libre)
+    const devisAmt = Number(d.devis_amount || 0);
+    if (Number.isFinite(devisAmt) && devisAmt > 0) {
+      // on utilise la prestation "Devis personnalisé" (category=devis) si elle existe
+      const all = await dbListPrestations(true);
+      const devisPresta = (all || []).find((p) => p.category === "devis") || null;
+      if (devisPresta) {
+        const total = money2(devisAmt);
 
         const empPercent = d.employee_id ? Number(d.employee_percent || 0) : 0;
         const empPart = d.employee_id ? money2((total * empPercent) / 100) : 0;
         const coPart = d.employee_id ? money2(total - empPart) : total;
 
         const payload = {
+          group_id,
           client_id: d.client_id,
-          pet_id: d.pet_id,
-          prestation_id: seg.prestation_id,
-          slot: seg.slot,
-          start_date: seg.start_date,
-          end_date: seg.end_date,
-          days_count: days,
+          pet_id: d.pet_id || null,
+          prestation_id: devisPresta.id,
+          slot: null,
+          start_date: d.start_date,
+          end_date: d.end_date,
+          days_count: 1,
           total_chf: total,
           employee_id: d.employee_id || null,
           employee_percent: d.employee_id ? empPercent : 0,
           employee_part_chf: empPart,
           company_part_chf: coPart,
-          notes: JSON.stringify({ supplements: d.supplements || [], smart_split: segs.length > 1 }),
+          notes: d.devis_note || "",
           status: "confirmed",
         };
 
-        const inserted = await dbInsertBooking(payload);
-        created.push(inserted);
+        created.push(await dbInsertBooking(payload));
       }
-
-      wBooking.delete(chatId);
-
-      const recap = created
-        .map((b) => `• #${b.id} — ${b.start_date}→${b.end_date} — ${slotLabel(b.slot)} — *${b.total_chf} CHF*`)
-        .join("\n");
-
-      return bot.sendMessage(
-        chatId,
-        `✅ *Réservation confirmée*\n\nSegments créés: *${created.length}*\n${recap}`,
-        { parse_mode: "Markdown", ...kb([[{ text: "⬅️ Menu", callback_data: "back_main" }]]) }
-      );
-    } catch (e) {
-      wBooking.delete(chatId);
-      return bot.sendMessage(chatId, `❌ Ajout KO: ${e.message}`, kb([[{ text: "⬅️ Menu", callback_data: "back_main" }]]));
     }
+
+    wBooking.delete(chatId);
+
+    // recap
+    const recap = created
+      .map((b) => `• #${b.id} — ${b.start_date || "—"}→${b.end_date || "—"} — ${b.slot ? slotLabel(b.slot) : "—"} — *${b.total_chf} CHF*`)
+      .join("\n");
+
+    return bot.sendMessage(chatId, `✅ *Garde confirmée*\n\nGroup: \`${group_id}\`\n\nLignes créées: *${created.length}*\n${recap}`, {
+      parse_mode: "Markdown",
+      ...kb([[{ text: "⬅️ Menu", callback_data: "back_main" }]]),
+    });
+  } catch (e) {
+    wBooking.delete(chatId);
+    return bot.sendMessage(chatId, `❌ Ajout KO: ${e.message}`, kb([[{ text: "⬅️ Menu", callback_data: "back_main" }]]));
   }
+}
 
-
-  /* ================== EMPLOYEES MENU ================== */
+/* ================== EMPLOYEES MENU ================== */
   if (q.data === "emp_list") {
     const emps = await dbListEmployees();
     const rows = emps.slice(0, 25).map((e) => [
@@ -1677,21 +1854,24 @@ bot.on("message", async (msg) => {
   const bk = getBkState(chatId);
   if (bk) {
     const d = bk.data || {};
-
-    // qty pour un supplément (par_chat / par_action)
-    if (bk.data?._pending_sup) {
-      const qn = Number(text);
-      if (!Number.isFinite(qn) || qn <= 0) return bot.sendMessage(chatId, "❌ Envoie un nombre > 0");
-      const ps = bk.data._pending_sup;
-
-      bk.data.supplements = bk.data.supplements || [];
-      const total = money2(Number(ps.unit) * qn);
-      bk.data.supplements.push({ id: ps.id, name: ps.name, qty: Math.floor(qn), unit: Number(ps.unit), total });
-
-      delete bk.data._pending_sup;
-      setBkState(chatId, bk);
-      return renderBookingStep(chatId);
-    }
+// devis amount / note
+if (bk.step === "devis_amount") {
+  const amt = Number(String(text).replace(",", "."));
+  if (!Number.isFinite(amt) || amt < 0) return bot.sendMessage(chatId, "❌ Envoie un montant valide (ex: 120)");
+  bk.data.devis_amount = money2(amt);
+  pushStep(bk, bk.step);
+  bk.step = "devis_note";
+  setBkState(chatId, bk);
+  return renderBookingStep(chatId);
+}
+if (bk.step === "devis_note") {
+  const note = String(text || "").trim();
+  bk.data.devis_note = note === "-" ? "" : note;
+  pushStep(bk, bk.step);
+  bk.step = "addons";
+  setBkState(chatId, bk);
+  return renderBookingStep(chatId);
+}
 
 
     // pet_new_name typed (after type selection)

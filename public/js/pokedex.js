@@ -103,13 +103,25 @@
   }
 
   function fillPrestationOptions(selectedId) {
-    const sel = $("ebPrestation");
-    if (!sel) return;
-    const packs = (prestations || []).filter((p) => p.active && p.category === "pack");
-    sel.innerHTML = packs
-      .map((p) => `<option value="${p.id}" ${Number(p.id) === Number(selectedId) ? "selected" : ""}>${safe(p.name)} • ${money(p.price_chf)} CHF</option>`)
-      .join("");
-  }
+  const sel = $("ebPrestation");
+  if (!sel) return;
+  const list = (prestations || []).filter((p) => p.active);
+  sel.innerHTML = list
+    .map((p) => {
+      const badge =
+        p.category === "pack" ? "📦" :
+        p.category === "service" ? "🧾" :
+        p.category === "menage" ? "🧼" :
+        p.category === "supplement" ? "🧶" :
+        p.category === "devis" ? "🧾" : "🧾";
+      const extra =
+        p.category === "pack" ? `(${p.visits_per_day} visite/j)` :
+        p.category === "service" ? `(${p.duration_min} min)` :
+        "";
+      return `<option value="${p.id}" ${Number(p.id) === Number(selectedId) ? "selected" : ""}>${badge} ${safe(p.name)} ${extra} • ${money(p.price_chf)} CHF</option>`;
+    })
+    .join("");
+}
 
   async function openEditBooking(id) {
     try {
@@ -123,6 +135,7 @@
       $("ebStart").value = safe(b.start_date);
       $("ebEnd").value = safe(b.end_date);
       $("ebSlot").value = safe(b.slot);
+      $("ebTotalOverride").value = safe(b.total_chf);
 
       getBootstrapModal()?.show();
     } catch (e) {
@@ -139,6 +152,7 @@
         start_date: $("ebStart").value,
         end_date: $("ebEnd").value,
         slot: $("ebSlot").value,
+        total_override: $("ebTotalOverride").value,
       };
 
       const initData = tg?.initData || "";
