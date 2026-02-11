@@ -35,58 +35,60 @@ const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE, {
   auth: { persistSession: false },
 });
 
-// Helper global pour éviter ReferenceError
-function visitsMultiplierFromSlot(slot) {
-  return slot === "matin_soir" ? 2 : 1;
-}
-globalThis.visitsMultiplierFromSlot = visitsMultiplierFromSlot;
-
-
 /* ================== ADMIN ================== */
 const ADMIN_IDS = new Set([6675436692]); // <-- ton ID Telegram
 const isAdmin = (chatId) => ADMIN_IDS.has(chatId);
 
-/* ================== TELEGRAM BOT (409 FIX) ==================
+/* ================== TELEGRAM BOT (409 FIX — STABLE) ==================
    - IMPORTANT: sur Render => WEB_CONCURRENCY=1
    - On force deleteWebhook(drop_pending_updates) puis startPolling
+   - Anti double-start polling + retry + stopPolling sur 409
 */
 const bot = new TelegramBot(process.env.BOT_TOKEN, { polling: false });
 
-async function startTelegram() {
-  // 1) coupe tout webhook éventuel
-  try { await bot.deleteWebHook({ drop_pending_updates: true }); } catch (e) {
-    console.log("deleteWebHook err:", e?.message || e);
-  }
+let _pollingStarting = false;
+async function startTelegramPolling() {
+  if (_pollingStarting) return;
+  _pollingStarting = true;
 
-  // 2) démarre le polling proprement
   try {
-    await bot.startPolling({ restart: true });
-    console.log("✅ Telegram polling démarré");
+    // 1) coupe tout webhook éventuel
+    try {
+      await bot.deleteWebHook({ drop_pending_updates: true });
+    } catch {}
+
+    // 2) stop tout polling précédent (évite double polling dans le même process)
+    try {
+      await bot.stopPolling();
+    } catch {}
+
+    // 3) démarre le polling proprement
+    await bot.startPolling({ restart: true, timeout: 10 });
+    console.log("✅ Le sondage Telegram a commencé");
   } catch (e) {
-    console.log("❌ startPolling err:", e?.message || e);
-    // retry soft
-    setTimeout(startTelegram, 2500);
+    console.error("❌ startPolling err:", e?.message || e);
+    setTimeout(startTelegramPolling, 2500);
+  } finally {
+    _pollingStarting = false;
   }
 }
 
-startTelegram();
+startTelegramPolling();
 
-// log des erreurs polling
 bot.on("polling_error", (e) => {
-  console.log("polling_error:", e?.message || e);
+  const msg = e?.message || String(e || "");
+  console.error("❌ polling_error :", msg);
+  if (msg.includes("409") || msg.toLowerCase().includes("conflict")) {
+    try {
+      bot.stopPolling();
+    } catch {}
+    setTimeout(startTelegramPolling, 3000);
+  }
 });
-
-startPollingSafe();
 
 // Évite que Node 22 tue le process sur un rejet non géré.
-// On log l'erreur pour debug, et on laisse le service vivre.
 process.on("unhandledRejection", (reason) => {
-  console.error("❌ UnhandledRejection:", reason);
-});
-
-// Log utile pour les erreurs de polling (409, etc.)
-bot.on("polling_error", (e) => {
-  console.error("❌ polling_error:", e);
+  console.error("❌ Rejet non géré :", reason);
 });
 
 function safeStopPolling() {
