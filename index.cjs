@@ -43,23 +43,31 @@ const isAdmin = (chatId) => ADMIN_IDS.has(chatId);
    - IMPORTANT: sur Render => WEB_CONCURRENCY=1
    - On force deleteWebhook(drop_pending_updates) puis startPolling
 */
-const bot = new TelegramBot(BOT_TOKEN, { polling: false });
+const bot = new TelegramBot(process.env.BOT_TOKEN, { polling: false });
 
-async function startPollingSafe() {
-  try {
-    await bot.deleteWebHook({ drop_pending_updates: true });
-  } catch {}
+async function startTelegram() {
+  // 1) coupe tout webhook éventuel
+  try { await bot.deleteWebHook({ drop_pending_updates: true }); } catch (e) {
+    console.log("deleteWebHook err:", e?.message || e);
+  }
 
+  // 2) démarre le polling proprement
   try {
-    // startPolling retourne une Promise (peut rejeter: 409 conflict, réseau, etc.)
-    await bot.startPolling({ interval: 300, params: { timeout: 10 } });
+    await bot.startPolling({ restart: true });
     console.log("✅ Telegram polling démarré");
   } catch (e) {
-    console.error("❌ startPolling échoué:", e);
-    // retry (ex: si une autre instance poll encore / conflit 409)
-    setTimeout(startPollingSafe, 2000);
+    console.log("❌ startPolling err:", e?.message || e);
+    // retry soft
+    setTimeout(startTelegram, 2500);
   }
 }
+
+startTelegram();
+
+// log des erreurs polling
+bot.on("polling_error", (e) => {
+  console.log("polling_error:", e?.message || e);
+});
 
 startPollingSafe();
 
