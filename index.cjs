@@ -45,13 +45,47 @@ const isAdmin = (chatId) => ADMIN_IDS.has(chatId);
 */
 const bot = new TelegramBot(BOT_TOKEN, { polling: false });
 
-(async () => {
-  try {
-    await bot.deleteWebHook({ drop_pending_updates: true });
-  } catch {}
-  bot.startPolling({ interval: 300, params: { timeout: 10 } });
-})();
+/**
+ * Telegram polling (Render safe):
+ * - deleteWebhook(drop_pending_updates) pour éviter les conflits
+ * - startPolling avec retry, et surtout PAS d'unhandled rejection (Node 22)
+ */
+let _pollingStarting = false;
+async function startPollingSafe() {
+  if (_pollingStarting) return;
+  _pollingStarting = true;
 
+  try {
+    try { await bot.deleteWebHook({ drop_pending_updates: true }); } catch {}
+    try { bot.stopPolling(); } catch {}
+
+    await bot.startPolling({ interval: 300, params: { timeout: 10 } });
+    console.log("✅ Telegram polling démarré");
+  } catch (e) {
+    const msg = e?.message || String(e);
+    console.log("❌ polling start error:", msg);
+    // En cas de 409, on attend un peu et on retente
+    setTimeout(() => { _pollingStarting = false; startPollingSafe(); }, 2500);
+    return;
+  }
+
+  _pollingStarting = false;
+}
+
+bot.on("polling_error", (e) => {
+  console.log("❌ polling_error:", e?.message || e);
+});
+
+// Boot polling
+startPollingSafe();
+
+
+process.on("unhandledRejection", (reason) => {
+  console.error("❌ Rejet non géré :", reason);
+});
+process.on("uncaughtException", (err) => {
+  console.error("❌ Exception non capturée :", err);
+});
 function safeStopPolling() {
   try {
     bot.stopPolling();
@@ -1055,7 +1089,8 @@ bot.on("callback_query", async (q) => {
   if (!chatId) return;
   await answerCbq(q);
 
-  if (!isAdmin(chatId)) return bot.sendMessage(chatId, "⛔ Accès refusé.");
+  try {
+    if (!isAdmin(chatId)) return bot.sendMessage(chatId, "⛔ Accès refusé.");
 
   /* ----- GLOBAL NAV ----- */
   if (q.data === "back_main") return sendMainMenu(chatId);
@@ -1841,6 +1876,13 @@ if (q.data === "bk_confirm") {
       ...kb([[{ text: "⬅️ Retour", callback_data: `pre_open_${id}` }]]),
     });
   }
+  } catch (e) {
+    console.error("❌ callback_query crash:", e);
+    try {
+      await bot.sendMessage(chatId, `❌ Erreur: ${e?.message || e}`);
+    } catch {}
+  }
+
 });
 
 /* ================== TEXT INPUT HANDLER ================== */
