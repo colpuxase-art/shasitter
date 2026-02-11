@@ -39,53 +39,58 @@ const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE, {
 const ADMIN_IDS = new Set([6675436692]); // <-- ton ID Telegram
 const isAdmin = (chatId) => ADMIN_IDS.has(chatId);
 
-/* ================== TELEGRAM BOT (409 FIX) ==================
+/* ================== TELEGRAM BOT (409 FIX — STABLE) ==================
    - IMPORTANT: sur Render => WEB_CONCURRENCY=1
    - On force deleteWebhook(drop_pending_updates) puis startPolling
+   - Anti double-start polling + retry + stopPolling sur 409
 */
-const bot = new TelegramBot(BOT_TOKEN, { polling: false });
+const bot = new TelegramBot(process.env.BOT_TOKEN, { polling: false });
 
-/**
- * Telegram polling (Render safe):
- * - deleteWebhook(drop_pending_updates) pour éviter les conflits
- * - startPolling avec retry, et surtout PAS d'unhandled rejection (Node 22)
- */
 let _pollingStarting = false;
-async function startPollingSafe() {
+async function startTelegramPolling() {
   if (_pollingStarting) return;
   _pollingStarting = true;
 
   try {
-    try { await bot.deleteWebHook({ drop_pending_updates: true }); } catch {}
-    try { bot.stopPolling(); } catch {}
+    // 1) coupe tout webhook éventuel
+    try {
+      await bot.deleteWebHook({ drop_pending_updates: true });
+    } catch {}
 
-    await bot.startPolling({ interval: 300, params: { timeout: 10 } });
-    console.log("✅ Telegram polling démarré");
+    // 2) stop tout polling précédent (évite double polling dans le même process)
+    try {
+      await bot.stopPolling();
+    } catch {}
+
+    // 3) démarre le polling proprement
+    await bot.startPolling({ restart: true, timeout: 10 });
+    console.log("✅ Le sondage Telegram a commencé");
   } catch (e) {
-    const msg = e?.message || String(e);
-    console.log("❌ polling start error:", msg);
-    // En cas de 409, on attend un peu et on retente
-    setTimeout(() => { _pollingStarting = false; startPollingSafe(); }, 2500);
-    return;
+    console.error("❌ startPolling err:", e?.message || e);
+    setTimeout(startTelegramPolling, 2500);
+  } finally {
+    _pollingStarting = false;
   }
-
-  _pollingStarting = false;
 }
 
+startTelegramPolling();
+
 bot.on("polling_error", (e) => {
-  console.log("❌ polling_error:", e?.message || e);
+  const msg = e?.message || String(e || "");
+  console.error("❌ polling_error :", msg);
+  if (msg.includes("409") || msg.toLowerCase().includes("conflict")) {
+    try {
+      bot.stopPolling();
+    } catch {}
+    setTimeout(startTelegramPolling, 3000);
+  }
 });
 
-// Boot polling
-startPollingSafe();
-
-
+// Évite que Node 22 tue le process sur un rejet non géré.
 process.on("unhandledRejection", (reason) => {
   console.error("❌ Rejet non géré :", reason);
 });
-process.on("uncaughtException", (err) => {
-  console.error("❌ Exception non capturée :", err);
-});
+
 function safeStopPolling() {
   try {
     bot.stopPolling();
@@ -698,6 +703,12 @@ function visitsMultiplierFromSlot(slot) {
   return slot === "matin_soir" ? 2 : 1;
 }
 
+// Expose helper globally (safe for callbacks/eval)
+globalThis.visitsMultiplierFromSlot = visitsMultiplierFromSlot;
+// Alias (legacy)
+globalThis.visitsMultiplierFromSlot = visitsMultiplierFromSlot;
+
+
 function filterPrestations(prestas, { categories, animal_type, visits_per_day }) {
   const cats = Array.isArray(categories) ? categories : (categories ? [categories] : null);
 
@@ -1089,8 +1100,7 @@ bot.on("callback_query", async (q) => {
   if (!chatId) return;
   await answerCbq(q);
 
-  try {
-    if (!isAdmin(chatId)) return bot.sendMessage(chatId, "⛔ Accès refusé.");
+  if (!isAdmin(chatId)) return bot.sendMessage(chatId, "⛔ Accès refusé.");
 
   /* ----- GLOBAL NAV ----- */
   if (q.data === "back_main") return sendMainMenu(chatId);
@@ -1315,12 +1325,35 @@ bot.on("callback_query", async (q) => {
   }
 
   
-
 // Options (suppléments + ménage) — TOUJOURS UNIQUES (1 seule fois)
+if (q.data?.startsWith("bk_add_")) {
+  const st = getBkState(chatId);
+  if (!st) return;
+  const pid = Number(q.data.replace("bk_add_", ""));
+  const p = await dbGetPrestation(pid);
+
+  if (!(p.category === "supplement" || p.category === "menage")) {
+    return bot.sendMessage(chatId, "❌ Cette prestation n’est pas une option.", kb([[{ text: "⬅️ Retour", callback_data: "bk_back" }]]));
+  }
+
+  st.data.addons = st.data.addons || [];
+  const exists = st.data.addons.some((x) => Number(x.id) === Number(p.id));
+  if (!exists) {
+    st.data.addons.push({
+      id: p.id,
+      name: p.name,
+      total: Number(p.price_chf || 0),
+      category: p.category,
+    });
+  }
+  setBkState(chatId, st);
+  return renderBookingStep(chatId);
+}
+
 if (q.data === "bk_add_prev") {
   const st = getBkState(chatId);
   if (!st) return;
-  st.data._addon_page = Math.max(0, Number(st.data._addon_page || 0) - 1);
+  st.data._addon_page = Number(st.data._addon_page || 0) - 1;
   setBkState(chatId, st);
   return renderBookingStep(chatId);
 }
@@ -1341,46 +1374,12 @@ if (q.data === "bk_devis") {
   return renderBookingStep(chatId);
 }
 
+  
 if (q.data === "bk_add_done") {
   const st = getBkState(chatId);
   if (!st) return;
   pushStep(st, st.step);
   st.step = "share_employee";
-  setBkState(chatId, st);
-  return renderBookingStep(chatId);
-}
-
-if (q.data?.startsWith("bk_add_")) {
-  const st = getBkState(chatId);
-  if (!st) return;
-
-  const raw = q.data.slice("bk_add_".length);
-  // ✅ sécurité anti-NaN
-  if (!/^[0-9]+$/.test(raw)) return;
-
-  const pid = Number(raw);
-  if (!Number.isFinite(pid)) return;
-
-  const p = await dbGetPrestation(pid);
-
-  if (!(p.category === "supplement" || p.category === "menage")) {
-    return bot.sendMessage(
-      chatId,
-      "❌ Cette prestation n’est pas une option.",
-      kb([[{ text: "⬅️ Retour", callback_data: "bk_back" }]])
-    );
-  }
-
-  st.data.addons = st.data.addons || [];
-  const exists = st.data.addons.some((x) => Number(x.id) === Number(p.id));
-  if (!exists) {
-    st.data.addons.push({
-      id: p.id,
-      name: p.name,
-      total: Number(p.price_chf || 0),
-      category: p.category,
-    });
-  }
   setBkState(chatId, st);
   return renderBookingStep(chatId);
 }
@@ -1887,13 +1886,6 @@ if (q.data === "bk_confirm") {
       ...kb([[{ text: "⬅️ Retour", callback_data: `pre_open_${id}` }]]),
     });
   }
-  } catch (e) {
-    console.error("❌ callback_query crash:", e);
-    try {
-      await bot.sendMessage(chatId, `❌ Erreur: ${e?.message || e}`);
-    } catch {}
-  }
-
 });
 
 /* ================== TEXT INPUT HANDLER ================== */
