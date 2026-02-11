@@ -66,10 +66,8 @@ startTelegram();
 
 // log des erreurs polling
 bot.on("polling_error", (e) => {
-  console.log("polling_error:", e?.message || e);
+  console.error("❌ polling_error:", e?.message || e);
 });
-
-startPollingSafe();
 
 // Évite que Node 22 tue le process sur un rejet non géré.
 // On log l'erreur pour debug, et on laisse le service vivre.
@@ -77,10 +75,7 @@ process.on("unhandledRejection", (reason) => {
   console.error("❌ UnhandledRejection:", reason);
 });
 
-// Log utile pour les erreurs de polling (409, etc.)
-bot.on("polling_error", (e) => {
-  console.error("❌ polling_error:", e);
-});
+// (déjà loggé ci-dessus)
 
 function safeStopPolling() {
   try {
