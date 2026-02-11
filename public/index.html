@@ -356,7 +356,53 @@
       </div>
     </footer>
 
-    <div id="toast">—</div>
+    
+    <!-- ===================== MODAL EDIT BOOKING ===================== -->
+    <div class="modal fade" id="modalEditBooking" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content bg-dark text-white border border-danger">
+          <div class="modal-header">
+            <h5 class="modal-title">✏️ Modifier réservation</h5>
+            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <div class="modal-body">
+            <div class="small muted mb-2">#<span id="ebId">—</span></div>
+
+            <label class="form-label">Prestation</label>
+            <select id="ebPrestation" class="form-select mb-3"></select>
+
+            <div class="row g-2">
+              <div class="col-6">
+                <label class="form-label">Début</label>
+                <input id="ebStart" type="date" class="form-control" />
+              </div>
+              <div class="col-6">
+                <label class="form-label">Fin</label>
+                <input id="ebEnd" type="date" class="form-control" />
+              </div>
+            </div>
+
+            <label class="form-label mt-3">Créneau</label>
+            <select id="ebSlot" class="form-select">
+              <option value="matin">matin</option>
+              <option value="soir">soir</option>
+              <option value="matin_soir">matin+soir</option>
+            </select>
+
+            <div class="mt-3">
+              <div class="muted small">ℹ️ Le total est recalculé automatiquement (packs Duo = prix “par jour”, sans x2).</div>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button id="ebDelete" type="button" class="btn btn-outline-danger">🗑️ Supprimer</button>
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+            <button id="ebSave" type="button" class="btn btn-warning">Enregistrer</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+<div id="toast">—</div>
 
     <!-- bottom nav -->
     <nav id="bottomNav" class="bottom-nav">

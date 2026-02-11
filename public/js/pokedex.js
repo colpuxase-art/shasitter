@@ -34,19 +34,6 @@
     });
   }
 
-
-function apiFetchJson(url, { method = "GET", body } = {}) {
-  const initData = tg?.initData || "";
-  const headers = { "X-Telegram-InitData": initData };
-  if (body !== undefined) headers["Content-Type"] = "application/json";
-  return fetch(url, {
-    cache: "no-store",
-    method,
-    headers,
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
-}
-
   /* ================= STATE ================= */
   let prestations = [];
   let clients = [];
@@ -103,7 +90,113 @@ function apiFetchJson(url, { method = "GET", body } = {}) {
     toast("✅ OK");
   });
 
-  /* ================= LOAD ================= */
+  
+  /* ================= BOOKING ACTIONS (EDIT/DELETE) ================= */
+  let ebModal = null;
+  let ebCurrentId = null;
+
+  function getBootstrapModal() {
+    const el = document.getElementById("modalEditBooking");
+    if (!el || !window.bootstrap) return null;
+    if (!ebModal) ebModal = new window.bootstrap.Modal(el);
+    return ebModal;
+  }
+
+  function fillPrestationOptions(selectedId) {
+    const sel = $("ebPrestation");
+    if (!sel) return;
+    const packs = (prestations || []).filter((p) => p.active && p.category === "pack");
+    sel.innerHTML = packs
+      .map((p) => `<option value="${p.id}" ${Number(p.id) === Number(selectedId) ? "selected" : ""}>${safe(p.name)} • ${money(p.price_chf)} CHF</option>`)
+      .join("");
+  }
+
+  async function openEditBooking(id) {
+    try {
+      const r = await apiFetch(`/api/bookings/${id}`);
+      if (!r.ok) throw new Error("API");
+      const b = await r.json();
+
+      ebCurrentId = b.id;
+      $("ebId").textContent = String(b.id);
+      fillPrestationOptions(b.prestation_id);
+      $("ebStart").value = safe(b.start_date);
+      $("ebEnd").value = safe(b.end_date);
+      $("ebSlot").value = safe(b.slot);
+
+      getBootstrapModal()?.show();
+    } catch (e) {
+      console.error(e);
+      toast("❌ Impossible d’ouvrir");
+    }
+  }
+
+  async function saveEditBooking() {
+    if (!ebCurrentId) return;
+    try {
+      const payload = {
+        prestation_id: Number($("ebPrestation").value),
+        start_date: $("ebStart").value,
+        end_date: $("ebEnd").value,
+        slot: $("ebSlot").value,
+      };
+
+      const initData = tg?.initData || "";
+      const r = await fetch(`/api/bookings/${ebCurrentId}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Telegram-InitData": initData,
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!r.ok) throw new Error("API");
+      toast("✅ Modifié");
+      getBootstrapModal()?.hide();
+      await loadAll();
+      renderAll();
+    } catch (e) {
+      console.error(e);
+      toast("❌ Échec modification");
+    }
+  }
+
+  async function deleteBooking(id) {
+    if (!id) return;
+    if (!confirm(`Supprimer la réservation #${id} ?`)) return;
+    try {
+      const initData = tg?.initData || "";
+      const r = await fetch(`/api/bookings/${id}`, {
+        method: "DELETE",
+        headers: { "X-Telegram-InitData": initData },
+      });
+      if (!r.ok) throw new Error("API");
+      toast("🗑️ Supprimé");
+      await loadAll();
+      renderAll();
+    } catch (e) {
+      console.error(e);
+      toast("❌ Échec suppression");
+    }
+  }
+
+  $("ebSave")?.addEventListener("click", saveEditBooking);
+  $("ebDelete")?.addEventListener("click", () => deleteBooking(ebCurrentId));
+
+  // Delegation click
+  document.addEventListener("click", (ev) => {
+    const t = ev.target;
+    if (!t) return;
+
+    const btnE = t.closest?.(".act-edit-booking");
+    if (btnE) return openEditBooking(btnE.getAttribute("data-id"));
+
+    const btnD = t.closest?.(".act-del-booking");
+    if (btnD) return deleteBooking(btnD.getAttribute("data-id"));
+  });
+
+/* ================= LOAD ================= */
   async function loadAll() {
     // si pas Telegram, on affiche accès refusé (car API va 401)
     try {
@@ -157,32 +250,26 @@ function apiFetchJson(url, { method = "GET", body } = {}) {
     if (paEl) paEl.innerHTML = "";
 
     const makeItem = (b) => {
-  const c = b.clients?.name || "—";
-  const p = b.prestations?.name || "—";
-  const emp = b.employees?.name ? `👩‍💼 ${b.employees.name}` : "—";
-  const slot = b.slot ? b.slot.replace("matin_soir", "matin+soir") : "—";
-  return `
-    <div class="list-group-item rounded-3 mb-2" data-booking="${b.id}">
-      <div class="d-flex justify-content-between flex-wrap gap-2">
-        <div>
-          <div class="fw-bold">#${b.id} • ${c}</div>
-          <div class="muted">${safe(b.start_date)} → ${safe(b.end_date)} • ${safe(b.days_count)} jour(s)</div>
-          <div class="muted">🐾 ${p} • ⏰ ${slot}</div>
-          <div class="muted">Employé: ${emp}</div>
-          <div class="mt-2 d-flex gap-2 flex-wrap">
-            <span class="badge text-bg-danger">Total ${money(b.total_chf)} CHF</span>
-            <span class="badge text-bg-warning text-dark">ShaSitter ${money(b.company_part_chf)} CHF</span>
-            <span class="badge text-bg-secondary">Employé ${money(b.employee_part_chf)} CHF</span>
+      const c = b.clients?.name || "—";
+      const p = b.prestations?.name || "—";
+      const emp = b.employees?.name ? ` • 👩‍💼 ${b.employees.name}` : "";
+      const slot = b.slot ? ` • ${b.slot.replace("matin_soir", "matin+soir")}` : "";
+      return `
+        <div class="list-group-item rounded-3 mb-2">
+          <div class="d-flex justify-content-between flex-wrap gap-2">
+            <div>
+              <div class="fw-bold">#${b.id} • ${c}</div>
+              <div class="muted">${safe(b.start_date)} → ${safe(b.end_date)}${slot}</div>
+              <div class="muted">🐾 ${p}${emp}</div>
+            </div>
+            <div class="text-end">
+              <div class="badge text-bg-danger">${money(b.total_chf)} CHF</div>
+              <div class="muted small">${safe(b.days_count)} jour(s)</div>
+            </div>
           </div>
         </div>
-        <div class="d-flex gap-2 align-items-start">
-          <button class="btn btn-sm btn-outline-light js-edit-booking">✏️</button>
-          <button class="btn btn-sm btn-outline-danger js-del-booking">🗑️</button>
-        </div>
-      </div>
-    </div>
-  `;
-};
+      `;
+    };
 
     if (upEl) {
       const list = upcoming.slice(0, 8);
@@ -316,12 +403,22 @@ function apiFetchJson(url, { method = "GET", body } = {}) {
       const p = b.prestations?.name || "—";
       const emp = b.employees?.name ? `👩‍💼 ${b.employees.name}` : "—";
       const slot = b.slot ? b.slot.replace("matin_soir", "matin+soir") : "—";
+      const isPast = new Date(safe(b.end_date)) < new Date();
       return `
         <div class="list-group-item rounded-3 mb-2">
-          <div class="fw-bold">#${b.id} • ${c}</div>
-          <div class="muted">${safe(b.start_date)} → ${safe(b.end_date)} • ${safe(b.days_count)} jour(s)</div>
-          <div class="muted">🐾 ${p} • ⏰ ${slot}</div>
-          <div class="muted">Employé: ${emp}</div>
+          <div class="d-flex justify-content-between align-items-start gap-2">
+            <div>
+              <div class="fw-bold">#${b.id} • ${c}</div>
+              <div class="muted">${safe(b.start_date)} → ${safe(b.end_date)} • ${safe(b.days_count)} jour(s)</div>
+              <div class="muted">🐾 ${p} • ⏰ ${slot}</div>
+              <div class="muted">Employé: ${emp}</div>
+            </div>
+            <div class="d-flex gap-2 flex-wrap justify-content-end">
+              <button class="btn btn-sm btn-outline-warning act-edit-booking" data-id="${b.id}">✏️</button>
+              <button class="btn btn-sm btn-outline-danger act-del-booking" data-id="${b.id}">🗑️</button>
+            </div>
+          </div>
+
           <div class="mt-2 d-flex gap-2 flex-wrap">
             <span class="badge text-bg-danger">Total ${money(b.total_chf)} CHF</span>
             <span class="badge text-bg-warning text-dark">ShaSitter ${money(b.company_part_chf)} CHF</span>
@@ -333,70 +430,6 @@ function apiFetchJson(url, { method = "GET", body } = {}) {
 
     if (up) up.innerHTML = upcoming.length ? upcoming.map(makeItem).join("") : `<div class="muted">Aucune réservation à venir.</div>`;
     if (pa) pa.innerHTML = past.length ? past.slice(0, 30).map(makeItem).join("") : `<div class="muted">Aucune réservation passée.</div>`;
-
-// Actions (edit / delete)
-const bindActions = (root) => {
-  if (!root) return;
-  root.querySelectorAll(".js-del-booking").forEach((btn) => {
-    btn.onclick = async (e) => {
-      e.preventDefault();
-      const wrap = btn.closest("[data-booking]");
-      const id = wrap ? Number(wrap.getAttribute("data-booking")) : null;
-      if (!id) return;
-      if (!confirm(`Supprimer la réservation #${id} ?`)) return;
-      const r = await apiFetchJson(`/api/bookings/${id}`, { method: "DELETE" });
-      if (!r.ok) return toast("❌ Suppression KO");
-      await loadAll();
-      renderAll();
-      toast("✅ Supprimé");
-    };
-  });
-
-  root.querySelectorAll(".js-edit-booking").forEach((btn) => {
-    btn.onclick = async (e) => {
-      e.preventDefault();
-      const wrap = btn.closest("[data-booking]");
-      const id = wrap ? Number(wrap.getAttribute("data-booking")) : null;
-      if (!id) return;
-
-      const r0 = await apiFetchJson(`/api/bookings/${id}`);
-      if (!r0.ok) return toast("❌ Lecture KO");
-      const b = await r0.json();
-
-      const prestaId = prompt("prestation_id (ex: 1)", b.prestation_id);
-      if (prestaId === null) return;
-
-      const slot = prompt('slot: "matin" | "soir" | "matin_soir"', b.slot);
-      if (slot === null) return;
-
-      const start = prompt("start_date (YYYY-MM-DD)", b.start_date);
-      if (start === null) return;
-
-      const end = prompt("end_date (YYYY-MM-DD)", b.end_date);
-      if (end === null) return;
-
-      const empPercent = prompt("employee_percent (0-100)", b.employee_percent || 0);
-      if (empPercent === null) return;
-
-      const payload = {
-        prestation_id: Number(prestaId),
-        slot: String(slot || "").trim(),
-        start_date: String(start || "").trim(),
-        end_date: String(end || "").trim(),
-        employee_percent: Number(empPercent),
-      };
-
-      const r = await apiFetchJson(`/api/bookings/${id}`, { method: "PUT", body: payload });
-      if (!r.ok) return toast("❌ Update KO");
-      await loadAll();
-      renderAll();
-      toast("✅ Modifié");
-    };
-  });
-};
-
-bindActions(up);
-bindActions(pa);
   }
 
   /* ================= RENDER COMPTA ================= */
