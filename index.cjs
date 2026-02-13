@@ -36,7 +36,7 @@ const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE, {
 });
 
 /* ================== ADMIN ================== */
-const ADMIN_IDS = new Set([6675436692]); // <-- ton ID Telegram
+const ADMIN_IDS = new Set([6675436692, 8275234190]); // <-- ton ID Telegram
 const isAdmin = (chatId) => ADMIN_IDS.has(chatId);
 
 /* ================== TELEGRAM BOT (409 FIX — STABLE) ==================
