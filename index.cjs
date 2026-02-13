@@ -192,6 +192,48 @@ function addDaysISO(isoDate, deltaDays) {
   const dd = String(d.getUTCDate()).padStart(2, "0");
   return `${y}-${m}-${dd}`;
 }
+/* ================== ADVANCED DAY-BY-DAY PLANNER (MODE AVANCÉ) ==================
+   Objectif:
+   - Pour une période, choisir pour CHAQUE jour: matin / soir / matin+soir / aucun
+   - Choisir la prestation du matin et/ou du soir
+   - Auto-optimisation: si matin+soir sont le même pack_family => utiliser le pack Duo correspondant (visits_per_day=2)
+   - Regroupement en segments (plages de dates) pour insérer moins de lignes en DB
+*/
+function buildDateList(startISO, endISO) {
+  const n = daysInclusive(startISO, endISO);
+  const out = [];
+  for (let i = 0; i < n; i++) out.push(addDaysISO(startISO, i));
+  return out;
+}
+function getDayPlan(d, dateISO) {
+  d.day_plans = d.day_plans || {};
+  if (!d.day_plans[dateISO]) d.day_plans[dateISO] = { slot: null, matin_id: null, soir_id: null };
+  return d.day_plans[dateISO];
+}
+function dayPlanIsComplete(plan) {
+  if (!plan || !plan.slot) return false;
+  if (plan.slot === "none") return true;
+  if (plan.slot === "matin") return !!plan.matin_id;
+  if (plan.slot === "soir") return !!plan.soir_id;
+  if (plan.slot === "matin_soir") return !!plan.matin_id && !!plan.soir_id;
+  return false;
+}
+async function getDuoForFamily(packFamily, animalType) {
+  if (!packFamily) return null;
+  const { data, error } = await sb
+    .from("prestations")
+    .select("*")
+    .eq("active", true)
+    .eq("category", "pack")
+    .eq("visits_per_day", 2)
+    .eq("pack_family", packFamily)
+    .order("id", { ascending: true })
+    .limit(1);
+  if (error) throw error;
+  const duo = (data || [])[0] || null;
+  return duo;
+}
+
 const ANIMALS = ["chat", "lapin", "autre"];
 const SLOTS = ["matin", "soir", "matin_soir"];
 
@@ -782,7 +824,8 @@ function addonsTotal() {
 function addonsText() {
   const arr = d.addons || [];
   if (!arr.length) return "— Aucun";
-  return arr.map((x) => `• ${x.name} = ${money2(x.total)} CHF`).join("\n");
+  return arr.map((x) => `• ${x.name}${x.qty ? ` (x${x.qty})` : ''} = ${money2(x.total)} CHF`).join("
+");
 }
 
 function devisTotal() {
@@ -790,46 +833,52 @@ function devisTotal() {
 }
 
   function buildSegments() {
-    const start = d.start_date;
-    const end = d.end_date;
-    const nDays = daysInclusive(start, end);
-    if (nDays < 1) throw new Error("Dates invalides");
-
-    // 1 jour
-    if (nDays === 1) {
-      return [
-        {
-          slot: d.slot_single,
-          start_date: start,
-          end_date: end,
-          prestation_id: d.prestation_single_day,
-        },
-      ];
+  // Mode avancé: jour par jour
+  if (Array.isArray(d.dates) && d.dates.length && d.day_plans) {
+    const segsDaily = [];
+    for (const date of d.dates) {
+      const plan = getDayPlan(d, date);
+      if (!plan.slot || plan.slot === "none") continue;
+      if (plan.slot === "matin") segsDaily.push({ slot: "matin", start_date: date, end_date: date, prestation_id: plan.matin_id });
+      else if (plan.slot === "soir") segsDaily.push({ slot: "soir", start_date: date, end_date: date, prestation_id: plan.soir_id });
+      else if (plan.slot === "matin_soir") {
+        // auto-duo pack si possible sera calculé plus bas (async), ici on garde les 2 ids
+        segsDaily.push({ slot: "matin_soir", start_date: date, end_date: date, prestation_id: null, matin_id: plan.matin_id, soir_id: plan.soir_id });
+      }
     }
-
-    // multi jours
-    const segs = [];
-
-    // day1
-    const s1 = d.slot_start;
-    if (s1 === "matin") segs.push({ slot: "matin", start_date: start, end_date: start, prestation_id: d.prestation_matin });
-    if (s1 === "soir") segs.push({ slot: "soir", start_date: start, end_date: start, prestation_id: d.prestation_soir });
-    if (s1 === "matin_soir") segs.push({ slot: "matin_soir", start_date: start, end_date: start, prestation_id: d.prestation_full });
-
-    // middle
-    const midStart = addDaysISO(start, 1);
-    const midEnd = addDaysISO(end, -1);
-    const midDays = daysInclusive(midStart, midEnd);
-    if (midDays >= 1) segs.push({ slot: "matin_soir", start_date: midStart, end_date: midEnd, prestation_id: d.prestation_full });
-
-    // last day
-    const sl = d.slot_end;
-    if (sl === "matin") segs.push({ slot: "matin", start_date: end, end_date: end, prestation_id: d.prestation_matin });
-    if (sl === "soir") segs.push({ slot: "soir", start_date: end, end_date: end, prestation_id: d.prestation_soir });
-    if (sl === "matin_soir") segs.push({ slot: "matin_soir", start_date: end, end_date: end, prestation_id: d.prestation_full });
-
-    return segs;
+    return segsDaily;
   }
+
+  // Mode historique
+  const start = d.start_date;
+  const end = d.end_date;
+  const nDays = daysInclusive(start, end);
+  if (nDays < 1) throw new Error("Dates invalides (fin avant début ?)");
+
+  if (nDays === 1) {
+    if (!d.slot_single || !d.prestation_single_day) throw new Error("Infos manquantes (slot/prestation)");
+    return [{ slot: d.slot_single, start_date: start, end_date: end, prestation_id: d.prestation_single_day }];
+  }
+
+  if (!d.slot_start || !d.slot_end || !d.prestation_full) throw new Error("Infos manquantes (slots/prestations)");
+
+  const segs = [];
+  if (d.slot_start === "matin") segs.push({ slot: "matin", start_date: start, end_date: start, prestation_id: d.prestation_matin });
+  if (d.slot_start === "soir") segs.push({ slot: "soir", start_date: start, end_date: start, prestation_id: d.prestation_soir });
+  if (d.slot_start === "matin_soir") segs.push({ slot: "matin_soir", start_date: start, end_date: start, prestation_id: d.prestation_full });
+
+  const midStart = addDaysISO(start, 1);
+  const midEnd = addDaysISO(end, -1);
+  const midDays = daysInclusive(midStart, midEnd);
+  if (midDays >= 1) segs.push({ slot: "matin_soir", start_date: midStart, end_date: midEnd, prestation_id: d.prestation_full });
+
+  if (d.slot_end === "matin") segs.push({ slot: "matin", start_date: end, end_date: end, prestation_id: d.prestation_matin });
+  if (d.slot_end === "soir") segs.push({ slot: "soir", start_date: end, end_date: end, prestation_id: d.prestation_soir });
+  if (d.slot_end === "matin_soir") segs.push({ slot: "matin_soir", start_date: end, end_date: end, prestation_id: d.prestation_full });
+
+  for (const s of segs) if (!s.prestation_id) throw new Error("Prestation manquante pour un segment");
+  return segs;
+}
 
   // 1) client
   if (step === "pick_client") {
@@ -868,6 +917,67 @@ function devisTotal() {
       ...kb([bkNavRow()]),
     });
   }
+// 5) day slot (mode avancé)
+if (step === "day_slot") {
+  const dates = d.dates || [];
+  const idx = Number(d.day_index || 0);
+  const date = dates[idx];
+  if (!date) return bot.sendMessage(chatId, "❌ Aucune date (période invalide).", { ...kb([bkNavRow()]) });
+
+  const plan = getDayPlan(d, date);
+  const summary =
+    `📅 Jour: *${date}* (${idx + 1}/${dates.length})\n` +
+    `Créneau: *${plan.slot ? slotLabel(plan.slot) : "—"}*\n` +
+    `Matin: *${plan.matin_id ? "#" + plan.matin_id : "—"}*\n` +
+    `Soir: *${plan.soir_id ? "#" + plan.soir_id : "—"}*\n`;
+
+  const rows = [
+    [{ text: "🌅 Matin", callback_data: "bk_day_slot_matin" }],
+    [{ text: "🌙 Soir", callback_data: "bk_day_slot_soir" }],
+    [{ text: "🌅🌙 Matin + soir", callback_data: "bk_day_slot_matin_soir" }],
+    [{ text: "⛔ Aucun ce jour", callback_data: "bk_day_slot_none" }],
+  ];
+
+  const nav = [];
+  if (idx > 0) nav.push({ text: "⬅️ Jour précédent", callback_data: "bk_day_prev" });
+  nav.push({ text: "➡️ Jour suivant", callback_data: "bk_day_next" });
+  rows.push(nav);
+
+  const tools = [];
+  if (idx > 0) tools.push({ text: "📋 Copier jour précédent", callback_data: "bk_day_copy_prev" });
+  tools.push({ text: "📌 Appliquer ce modèle aux jours restants", callback_data: "bk_day_apply_all" });
+  rows.push(tools);
+
+  rows.push(bkNavRow());
+  return bot.sendMessage(chatId, `5/9 — Choisis le créneau pour ce jour\n\n${summary}`, { parse_mode: "Markdown", ...kb(rows) });
+}
+
+// 6) pick prestation matin for a given day
+if (step === "day_pick_matin") {
+  const animal_type = await getPetAnimalType();
+  const dates = d.dates || [];
+  const idx = Number(d.day_index || 0);
+  const date = dates[idx];
+  return renderPrestaPicker(
+    `6/9 — Choisis la prestation *Matin*\n\nJour: *${date}*\nAnimal: *${animalLabel(animal_type || "autre")}*`,
+    "__day_matin",
+    { categories: ["pack","service"], animal_type, visits_per_day: 1 }
+  );
+}
+
+// 7) pick prestation soir for a given day
+if (step === "day_pick_soir") {
+  const animal_type = await getPetAnimalType();
+  const dates = d.dates || [];
+  const idx = Number(d.day_index || 0);
+  const date = dates[idx];
+  return renderPrestaPicker(
+    `7/9 — Choisis la prestation *Soir*\n\nJour: *${date}*\nAnimal: *${animalLabel(animal_type || "autre")}*`,
+    "__day_soir",
+    { categories: ["pack","service"], animal_type, visits_per_day: 1 }
+  );
+}
+
 
   // 5) slot (1 jour)
   if (step === "slot_single") {
@@ -994,7 +1104,17 @@ if (step === "devis_note") {
     parse_mode: "Markdown",
     ...kb([bkNavRow()]),
   });
+}if (step === "addon_qty") {
+  const pend = d._addon_pending;
+  if (!pend) return bot.sendMessage(chatId, "❌ Option manquante.", { ...kb([bkNavRow()]) });
+  const label = pend.qty_label || "Quantité";
+  return bot.sendMessage(chatId, `🔢 ${label} — Envoie un nombre (ex: 2)\n\nOption: *${pend.name}* (${pend.price_chf} CHF)`, {
+    parse_mode: "Markdown",
+    ...kb([bkNavRow()]),
+  });
 }
+
+
 
   // share employee?
   if (step === "share_employee") {
@@ -1028,12 +1148,125 @@ if (step === "devis_note") {
 // recap
 if (step === "recap") {
   try {
-    const segs = buildSegments();
+    async function compileSegments() {
+  // Si mode avancé (day_plans) présent => on compile jour par jour
+  if (Array.isArray(d.dates) && d.dates.length && d.day_plans) {
+    const dates = d.dates;
+    const segmentsDaily = [];
+    for (const date of dates) {
+      const plan = getDayPlan(d, date);
+      if (!plan.slot) continue;
+      if (plan.slot === "none") continue;
+
+      if (plan.slot === "matin") {
+        segmentsDaily.push({ slot: "matin", start_date: date, end_date: date, prestation_id: plan.matin_id });
+        continue;
+      }
+      if (plan.slot === "soir") {
+        segmentsDaily.push({ slot: "soir", start_date: date, end_date: date, prestation_id: plan.soir_id });
+        continue;
+      }
+
+      // matin_soir
+      const pM = await dbGetPrestation(plan.matin_id);
+      const pS = await dbGetPrestation(plan.soir_id);
+
+      // Auto-duo uniquement pour les PACKS avec même pack_family
+      if (pM.category === "pack" && pS.category === "pack" && pM.pack_family && pM.pack_family === pS.pack_family) {
+        const duo = await getDuoForFamily(pM.pack_family, null);
+        if (duo?.id) {
+          segmentsDaily.push({ slot: "matin_soir", start_date: date, end_date: date, prestation_id: duo.id, _autoDuo: true });
+          continue;
+        }
+      }
+
+      // Sinon 2 lignes (matin + soir)
+      segmentsDaily.push({ slot: "matin", start_date: date, end_date: date, prestation_id: plan.matin_id });
+      segmentsDaily.push({ slot: "soir", start_date: date, end_date: date, prestation_id: plan.soir_id });
+    }
+
+    // Regroupe les jours consécutifs (même slot + même prestation_id) en plages
+    const sorted = segmentsDaily.sort((a,b)=> (a.start_date+b.slot+a.prestation_id).localeCompare(b.start_date+b.slot+b.prestation_id));
+    // On ne peut pas simplement trier comme ça; on va regrouper par (slot,prestation) en respectant la chronologie des dates
+    const byKey = new Map();
+    // We'll rebuild in chronological order
+    const chronological = segmentsDaily.sort((a,b)=> a.start_date.localeCompare(b.start_date) || a.slot.localeCompare(b.slot) || (a.prestation_id-b.prestation_id));
+    const segs = [];
+    for (const item of chronological) {
+      if (!item.prestation_id) continue;
+      const last = segs[segs.length-1];
+      if (last && last.slot===item.slot && Number(last.prestation_id)===Number(item.prestation_id) && addDaysISO(last.end_date,1)===item.start_date) {
+        last.end_date = item.end_date;
+      } else {
+        segs.push({ ...item });
+      }
+    }
+    return segs;
+  }
+
+  // Sinon mode historique (ancien) : segments 1er/jours complets/dernier
+  return buildSegments();
+}
+
+const segs = await compileSegments();
 
     let total = 0;
     const lines = [];
 
     for (const seg of segs) {
+  // Mode avancé: si seg.slot=matin_soir mais prestation_id vide => on essaie auto-duo (packs mêmes familles) sinon on split
+  if (seg.slot === "matin_soir" && !seg.prestation_id && seg.matin_id && seg.soir_id) {
+    const pM = await dbGetPrestation(seg.matin_id);
+    const pS = await dbGetPrestation(seg.soir_id);
+
+    if (pM.category === "pack" && pS.category === "pack" && pM.pack_family && pM.pack_family === pS.pack_family) {
+      const duo = await getDuoForFamily(pM.pack_family, null);
+      if (duo?.id) {
+        seg.prestation_id = duo.id;
+      }
+    }
+
+    // si toujours pas de prestation_id => on split en 2 segments (matin + soir)
+    if (!seg.prestation_id) {
+      // insert matin
+      const segM = { slot: "matin", start_date: seg.start_date, end_date: seg.end_date, prestation_id: seg.matin_id };
+      const segS = { slot: "soir", start_date: seg.start_date, end_date: seg.end_date, prestation_id: seg.soir_id };
+      // on traite en "inline" en réutilisant le code d'insertion via une mini-fonction
+      const toInsert = [segM, segS];
+      for (const ss of toInsert) {
+        const presta = await dbGetPrestation(ss.prestation_id);
+        const days = daysInclusive(ss.start_date, ss.end_date);
+        if (days < 1) continue;
+
+        const total = await computeLineTotal(presta, days, ss.slot);
+
+        const empPercent = d.employee_id ? Number(d.employee_percent || 0) : 0;
+        const empPart = d.employee_id ? money2((total * empPercent) / 100) : 0;
+        const coPart = d.employee_id ? money2(total - empPart) : total;
+
+        const payload = {
+          group_id,
+          client_id: d.client_id,
+          pet_id: d.pet_id || null,
+          prestation_id: ss.prestation_id,
+          slot: ss.slot,
+          start_date: ss.start_date,
+          end_date: ss.end_date,
+          days_count: days,
+          total_chf: total,
+          employee_id: d.employee_id || null,
+          employee_percent: d.employee_id ? empPercent : 0,
+          employee_part_chf: empPart,
+          company_part_chf: coPart,
+          notes: d.notes || "",
+          status: "confirmed",
+        };
+        created.push(await dbInsertBooking(payload));
+      }
+      continue; // skip the rest of the outer loop for this seg
+    }
+  }
+
       const presta = await dbGetPrestation(seg.prestation_id);
       const days = daysInclusive(seg.start_date, seg.end_date);
 
@@ -1264,13 +1497,35 @@ bot.on("callback_query", async (q) => {
     if (!ctx?.storeKey) return;
 
     pushStep(st, st.step);
-    st.data[ctx.storeKey] = id;
+    // Stockage spécial mode avancé
+if (ctx.storeKey === "__day_matin" || ctx.storeKey === "__day_soir") {
+  const dates = st.data.dates || [];
+  const idx = Number(st.data.day_index || 0);
+  const date = dates[idx];
+  const plan = getDayPlan(st.data, date);
+  if (ctx.storeKey === "__day_matin") plan.matin_id = id;
+  if (ctx.storeKey === "__day_soir") plan.soir_id = id;
+  st.data.day_plans = st.data.day_plans || {};
+  st.data.day_plans[date] = plan;
+} else {
+  st.data[ctx.storeKey] = id;
+}
     st.data._presta_page = 0; // reset page
 
     const needM = st.data.slot_start === "matin" || st.data.slot_end === "matin";
     const needS = st.data.slot_start === "soir" || st.data.slot_end === "soir";
 
-    if (st.step === "pick_presta_single_day") {
+    if (st.step === "day_pick_matin") {
+  // si slot = matin => prochain jour, sinon choisir soir
+  const dates = st.data.dates || [];
+  const date = dates[Number(st.data.day_index || 0)];
+  const plan = getDayPlan(st.data, date);
+  if (plan.slot === "matin") st.step = "day_slot";
+  else st.step = "day_pick_soir";
+} else if (st.step === "day_pick_soir") {
+  st.step = "day_slot";
+} else
+if (st.step === "pick_presta_single_day") {
       st.step = "addons";
     } else if (st.step === "pick_presta_full") {
       st.step = needM ? "pick_presta_matin" : (needS ? "pick_presta_soir" : "addons");
@@ -1322,10 +1577,113 @@ bot.on("callback_query", async (q) => {
     st.data._presta_page = 0;
     setBkState(chatId, st);
     return renderBookingStep(chatId);
+  }/* ===== MODE AVANCÉ: DAY PLANNER CALLBACKS ===== */
+if (q.data?.startsWith("bk_day_slot_")) {
+  const st = getBkState(chatId);
+  if (!st) return;
+  const slot = q.data.replace("bk_day_slot_", "");
+  const dates = st.data.dates || [];
+  const idx = Number(st.data.day_index || 0);
+  const date = dates[idx];
+  if (!date) return;
+
+  const plan = getDayPlan(st.data, date);
+  plan.slot = slot;
+  // reset selections if slot changes
+  if (slot === "none") { plan.matin_id = null; plan.soir_id = null; }
+  if (slot === "matin") { plan.soir_id = null; }
+  if (slot === "soir") { plan.matin_id = null; }
+  st.data.day_plans = st.data.day_plans || {};
+  st.data.day_plans[date] = plan;
+
+  pushStep(st, st.step);
+  if (slot === "none") {
+    st.step = "day_slot";
+  } else if (slot === "matin") {
+    st.step = "day_pick_matin";
+    st.data._presta_page = 0;
+  } else if (slot === "soir") {
+    st.step = "day_pick_soir";
+    st.data._presta_page = 0;
+  } else {
+    // matin_soir
+    st.step = "day_pick_matin";
+    st.data._presta_page = 0;
   }
+  setBkState(chatId, st);
+  return renderBookingStep(chatId);
+}
+
+if (q.data === "bk_day_prev") {
+  const st = getBkState(chatId);
+  if (!st) return;
+  st.data.day_index = Math.max(0, Number(st.data.day_index || 0) - 1);
+  st.step = "day_slot";
+  setBkState(chatId, st);
+  return renderBookingStep(chatId);
+}
+
+if (q.data === "bk_day_next") {
+  const st = getBkState(chatId);
+  if (!st) return;
+  const dates = st.data.dates || [];
+  const idx = Number(st.data.day_index || 0);
+  const date = dates[idx];
+  const plan = date ? getDayPlan(st.data, date) : null;
+  if (!dayPlanIsComplete(plan)) {
+    return bot.sendMessage(chatId, "❌ Choisis le créneau et la/les prestation(s) pour ce jour avant de continuer.", { ...kb([bkNavRow()]) });
+  }
+  const next = idx + 1;
+  if (next >= dates.length) {
+    // fini => options
+    pushStep(st, st.step);
+    st.step = "addons";
+    setBkState(chatId, st);
+    return renderBookingStep(chatId);
+  }
+  st.data.day_index = next;
+  st.step = "day_slot";
+  setBkState(chatId, st);
+  return renderBookingStep(chatId);
+}
+
+if (q.data === "bk_day_copy_prev") {
+  const st = getBkState(chatId);
+  if (!st) return;
+  const dates = st.data.dates || [];
+  const idx = Number(st.data.day_index || 0);
+  if (idx <= 0) return;
+  const prevDate = dates[idx - 1];
+  const curDate = dates[idx];
+  const prevPlan = getDayPlan(st.data, prevDate);
+  const curPlan = getDayPlan(st.data, curDate);
+  st.data.day_plans[curDate] = { ...curPlan, slot: prevPlan.slot, matin_id: prevPlan.matin_id, soir_id: prevPlan.soir_id };
+  setBkState(chatId, st);
+  return renderBookingStep(chatId);
+}
+
+if (q.data === "bk_day_apply_all") {
+  const st = getBkState(chatId);
+  if (!st) return;
+  const dates = st.data.dates || [];
+  const idx = Number(st.data.day_index || 0);
+  const date = dates[idx];
+  const plan = date ? getDayPlan(st.data, date) : null;
+  if (!dayPlanIsComplete(plan)) {
+    return bot.sendMessage(chatId, "❌ D’abord complète ce jour (créneau + prestations), puis applique.", { ...kb([bkNavRow()]) });
+  }
+  for (let i = idx; i < dates.length; i++) {
+    const di = dates[i];
+    st.data.day_plans[di] = { slot: plan.slot, matin_id: plan.matin_id || null, soir_id: plan.soir_id || null };
+  }
+  setBkState(chatId, st);
+  return renderBookingStep(chatId);
+}
+
+
 
   
-// Options (suppléments + ménage) — TOUJOURS UNIQUES (1 seule fois)
+// Options (suppléments + ménage) — UNIQUES
 if (q.data && /^bk_add_\d+$/.test(q.data)) {
   const st = getBkState(chatId);
   if (!st) return;
@@ -1338,14 +1696,27 @@ if (q.data && /^bk_add_\d+$/.test(q.data)) {
 
   st.data.addons = st.data.addons || [];
   const exists = st.data.addons.some((x) => Number(x.id) === Number(p.id));
-  if (!exists) {
-    st.data.addons.push({
-      id: p.id,
-      name: p.name,
-      total: Number(p.price_chf || 0),
-      category: p.category,
-    });
+  if (exists) {
+    return renderBookingStep(chatId);
   }
+
+  // Si supplément avec quantité (ex: multi-chat) => demander qty
+  if (p.ask_qty) {
+    pushStep(st, st.step);
+    st.data._addon_pending = { id: p.id, name: p.name, price_chf: Number(p.price_chf || 0), qty_label: p.qty_label || "Quantité" };
+    st.step = "addon_qty";
+    setBkState(chatId, st);
+    return renderBookingStep(chatId);
+  }
+
+  // sinon ajout direct
+  st.data.addons.push({
+    id: p.id,
+    name: p.name,
+    qty: 1,
+    total: Number(p.price_chf || 0),
+    category: p.category,
+  });
   setBkState(chatId, st);
   return renderBookingStep(chatId);
 }
@@ -1481,7 +1852,67 @@ if (q.data === "bk_confirm") {
 
   try {
     const group_id = crypto.randomUUID();
-    const segs = buildSegments();
+    async function compileSegments() {
+  // Si mode avancé (day_plans) présent => on compile jour par jour
+  if (Array.isArray(d.dates) && d.dates.length && d.day_plans) {
+    const dates = d.dates;
+    const segmentsDaily = [];
+    for (const date of dates) {
+      const plan = getDayPlan(d, date);
+      if (!plan.slot) continue;
+      if (plan.slot === "none") continue;
+
+      if (plan.slot === "matin") {
+        segmentsDaily.push({ slot: "matin", start_date: date, end_date: date, prestation_id: plan.matin_id });
+        continue;
+      }
+      if (plan.slot === "soir") {
+        segmentsDaily.push({ slot: "soir", start_date: date, end_date: date, prestation_id: plan.soir_id });
+        continue;
+      }
+
+      // matin_soir
+      const pM = await dbGetPrestation(plan.matin_id);
+      const pS = await dbGetPrestation(plan.soir_id);
+
+      // Auto-duo uniquement pour les PACKS avec même pack_family
+      if (pM.category === "pack" && pS.category === "pack" && pM.pack_family && pM.pack_family === pS.pack_family) {
+        const duo = await getDuoForFamily(pM.pack_family, null);
+        if (duo?.id) {
+          segmentsDaily.push({ slot: "matin_soir", start_date: date, end_date: date, prestation_id: duo.id, _autoDuo: true });
+          continue;
+        }
+      }
+
+      // Sinon 2 lignes (matin + soir)
+      segmentsDaily.push({ slot: "matin", start_date: date, end_date: date, prestation_id: plan.matin_id });
+      segmentsDaily.push({ slot: "soir", start_date: date, end_date: date, prestation_id: plan.soir_id });
+    }
+
+    // Regroupe les jours consécutifs (même slot + même prestation_id) en plages
+    const sorted = segmentsDaily.sort((a,b)=> (a.start_date+b.slot+a.prestation_id).localeCompare(b.start_date+b.slot+b.prestation_id));
+    // On ne peut pas simplement trier comme ça; on va regrouper par (slot,prestation) en respectant la chronologie des dates
+    const byKey = new Map();
+    // We'll rebuild in chronological order
+    const chronological = segmentsDaily.sort((a,b)=> a.start_date.localeCompare(b.start_date) || a.slot.localeCompare(b.slot) || (a.prestation_id-b.prestation_id));
+    const segs = [];
+    for (const item of chronological) {
+      if (!item.prestation_id) continue;
+      const last = segs[segs.length-1];
+      if (last && last.slot===item.slot && Number(last.prestation_id)===Number(item.prestation_id) && addDaysISO(last.end_date,1)===item.start_date) {
+        last.end_date = item.end_date;
+      } else {
+        segs.push({ ...item });
+      }
+    }
+    return segs;
+  }
+
+  // Sinon mode historique (ancien) : segments 1er/jours complets/dernier
+  return buildSegments();
+}
+
+const segs = await compileSegments();
 
     const created = [];
 
@@ -1522,7 +1953,7 @@ if (q.data === "bk_confirm") {
     const addons = d.addons || [];
     for (const a of addons) {
       const presta = await dbGetPrestation(a.id);
-      const total = money2(Number(presta.price_chf || 0)); // unique
+      const total = money2(Number(a.total || presta.price_chf || 0)); // unique (avec qty si applicable)
 
       const empPercent = d.employee_id ? Number(d.employee_percent || 0) : 0;
       const empPart = d.employee_id ? money2((total * empPercent) / 100) : 0;
@@ -1918,6 +2349,32 @@ if (bk.step === "devis_note") {
   return renderBookingStep(chatId);
 }
 
+// addon qty
+if (bk.step === "addon_qty") {
+  const pend = bk.data._addon_pending;
+  const qty = Number(text);
+  if (!pend) {
+    bk.step = "addons";
+    setBkState(chatId, bk);
+    return renderBookingStep(chatId);
+  }
+  if (!Number.isFinite(qty) || qty < 1) return bot.sendMessage(chatId, "❌ Envoie un nombre >= 1");
+  const qn = Math.floor(qty);
+  bk.data.addons = bk.data.addons || [];
+  bk.data.addons.push({
+    id: pend.id,
+    name: pend.name,
+    qty: qn,
+    total: money2(Number(pend.price_chf || 0) * qn),
+    category: "supplement",
+  });
+  delete bk.data._addon_pending;
+  pushStep(bk, bk.step);
+  bk.step = "addons";
+  setBkState(chatId, bk);
+  return renderBookingStep(chatId);
+}
+
 
     // pet_new_name typed (after type selection)
     if (bk.step === "pet_new_name") {
@@ -1963,8 +2420,11 @@ if (bk.step === "devis_note") {
       const days = daysInclusive(bk.data.start_date, bk.data.end_date);
       if (days < 1) return bot.sendMessage(chatId, "❌ Dates invalides (fin avant début ?)");
 
-      // 1 jour => slot unique, sinon => slots début/fin
-      bk.step = days === 1 ? "slot_single" : "slot_start";
+      // Mode avancé: planning jour par jour
+bk.data.dates = buildDateList(bk.data.start_date, bk.data.end_date);
+bk.data.day_index = 0;
+bk.data.day_plans = {};
+bk.step = "day_slot";
       setBkState(chatId, bk);
       return renderBookingStep(chatId);
     }
