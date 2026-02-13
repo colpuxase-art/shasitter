@@ -755,7 +755,7 @@ function filterPrestations(prestas, { categories, animal_type, visits_per_day })
   const cats = Array.isArray(categories) ? categories : (categories ? [categories] : null);
 
   return (prestas || []).filter((p) => {
-    if (!p.active) return false;
+    if (p.active === false) return false;
 
     if (cats && !cats.includes(p.category)) return false;
 
@@ -1059,7 +1059,7 @@ if (step === "day_pick_soir") {
 // addons (suppléments + ménage) + devis en plus
 if (step === "addons") {
   const all = await dbListPrestations(true);
-  const addons = (all || []).filter((p) => (p.category === "supplement" || p.category === "menage") && p.active);
+  const addons = (all || []).filter((p) => (p.category === "supplement" || p.category === "menage") && p.active !== false);
 
   const pageSize = 10;
   d._addon_page = Number(d._addon_page || 0);
