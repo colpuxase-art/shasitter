@@ -1618,33 +1618,70 @@ if (q.data === "bk_day_prev") {
   if (!st) return;
   st.data.day_index = Math.max(0, Number(st.data.day_index || 0) - 1);
   st.step = "day_slot";
-  setBkState(chatId, st);
-  return renderBookingStep(chatId);
+
+    // ✅ Auto-advance to next day when the current day is complete
+    try {
+      const dates = Array.isArray(st.data.dates) ? st.data.dates : [];
+      const idx = Number(st.data.day_index || 0);
+      const curDate = dates[idx] || null;
+      const curPlan = curDate ? ensureDayPlan(st, curDate) : null;
+
+      if (curDate && curPlan && dayPlanIsComplete(curPlan)) {
+        let next = idx + 1;
+        while (next < dates.length) {
+          const dp = ensureDayPlan(st, dates[next]);
+          if (!dayPlanIsComplete(dp)) break;
+          next++;
+        }
+        if (next >= dates.length) {
+          pushStep(st, st.step);
+          st.step = "addons";
+        } else {
+          st.data.day_index = next;
+          st.step = "day_slot";
+        }
+      }
+    } catch {}
+
+    setBkState(chatId, st);
+    return renderBookingStep(chatId);
 }
 
 if (q.data === "bk_day_next") {
-  const st = getBkState(chatId);
-  if (!st) return;
-  const dates = st.data.dates || [];
-  const idx = Number(st.data.day_index || 0);
-  const date = dates[idx];
-  const plan = date ? getDayPlan(st.data, date) : null;
-  if (!dayPlanIsComplete(plan)) {
-    return bot.sendMessage(chatId, "❌ Choisis le créneau et la/les prestation(s) pour ce jour avant de continuer.", { ...kb([bkNavRow()]) });
-  }
-  const next = idx + 1;
-  if (next >= dates.length) {
-    // fini => options
-    pushStep(st, st.step);
-    st.step = "addons";
+    const st = getBkState(chatId);
+    if (!st) return;
+
+    const dates = Array.isArray(st.data.dates) ? st.data.dates : [];
+    if (!dates.length) return;
+
+    const idx = Number(st.data.day_index || 0);
+    const curDate = dates[idx] || null;
+    if (!curDate) return;
+
+    const plan = ensureDayPlan(st, curDate);
+    if (!dayPlanIsComplete(plan)) {
+      return bot.sendMessage(chatId, "❌ Choisis d’abord le créneau + les prestations pour ce jour.", kb([[{ text: "⬅️ Retour", callback_data: "bk_back" }]]));
+    }
+
+    // jump to next incomplete day; if none -> options
+    let next = idx + 1;
+    while (next < dates.length) {
+      const dp = ensureDayPlan(st, dates[next]);
+      if (!dayPlanIsComplete(dp)) break;
+      next++;
+    }
+
+    if (next >= dates.length) {
+      pushStep(st, st.step);
+      st.step = "addons";
+    } else {
+      st.data.day_index = next;
+      st.step = "day_slot";
+    }
+
     setBkState(chatId, st);
     return renderBookingStep(chatId);
   }
-  st.data.day_index = next;
-  st.step = "day_slot";
-  setBkState(chatId, st);
-  return renderBookingStep(chatId);
-}
 
 if (q.data === "bk_day_copy_prev") {
   const st = getBkState(chatId);
