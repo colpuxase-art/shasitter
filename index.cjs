@@ -824,8 +824,7 @@ function addonsTotal() {
 function addonsText() {
   const arr = d.addons || [];
   if (!arr.length) return "— Aucun";
-  return arr.map((x) => `• ${x.name}${x.qty ? ` (x${x.qty})` : ''} = ${money2(x.total)} CHF`).join("
-");
+  return arr.map((x) => `• ${x.name}${x.qty ? ` (x${x.qty})` : ''} = ${money2(x.total)} CHF`).join("\n");
 }
 
 function devisTotal() {
