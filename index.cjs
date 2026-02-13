@@ -1515,16 +1515,16 @@ if (ctx.storeKey === "__day_matin" || ctx.storeKey === "__day_soir") {
     const needS = st.data.slot_start === "soir" || st.data.slot_end === "soir";
 
     if (st.step === "day_pick_matin") {
-  // si slot = matin => prochain jour, sinon choisir soir
-  const dates = st.data.dates || [];
-  const date = dates[Number(st.data.day_index || 0)];
-  const plan = getDayPlan(st.data, date);
-  if (plan.slot === "matin") st.step = "day_slot";
-  else st.step = "day_pick_soir";
-} else if (st.step === "day_pick_soir") {
-  st.step = "day_slot";
-} else
-if (st.step === "pick_presta_single_day") {
+      // si slot = matin => retour sur écran jour (et potentiellement auto-jour suivant),
+      // sinon on enchaîne sur le choix du soir.
+      const dates = st.data.dates || [];
+      const date = dates[Number(st.data.day_index || 0)];
+      const plan = getDayPlan(st.data, date);
+      if (plan.slot === "matin") st.step = "day_slot";
+      else st.step = "day_pick_soir";
+    } else if (st.step === "day_pick_soir") {
+      st.step = "day_slot";
+    } else if (st.step === "pick_presta_single_day") {
       st.step = "addons";
     } else if (st.step === "pick_presta_full") {
       st.step = needM ? "pick_presta_matin" : (needS ? "pick_presta_soir" : "addons");
@@ -1532,6 +1532,24 @@ if (st.step === "pick_presta_single_day") {
       st.step = needS ? "pick_presta_soir" : "addons";
     } else if (st.step === "pick_presta_soir") {
       st.step = "addons";
+    }
+
+    // ✅ MODE AVANCÉ: auto-passer au jour suivant quand le jour est complet
+    if (st.step === "day_slot") {
+      const dates = st.data.dates || [];
+      const idx = Number(st.data.day_index || 0);
+      const date = dates[idx];
+      const plan = date ? getDayPlan(st.data, date) : null;
+
+      const complete = plan ? dayPlanIsComplete(plan) : false;
+      if (complete) {
+        if (idx < dates.length - 1) {
+          st.data.day_index = idx + 1;
+        } else {
+          // dernier jour terminé => options
+          st.step = "addons";
+        }
+      }
     }
 
     setBkState(chatId, st);
@@ -1597,7 +1615,22 @@ if (q.data?.startsWith("bk_day_slot_")) {
 
   pushStep(st, st.step);
   if (slot === "none") {
-    st.step = "day_slot";
+    // si "Aucun ce jour" => jour complet, on avance automatiquement
+    const dates2 = Array.isArray(st.data.dates) ? st.data.dates : [];
+    const idx2 = Number(st.data.day_index || 0);
+    let next2 = idx2 + 1;
+    while (next2 < dates2.length) {
+      const dd = dates2[next2];
+      const pl = st.data.day_plans?.[dd];
+      if (!pl || !dayPlanIsComplete(pl)) break;
+      next2++;
+    }
+    if (next2 >= dates2.length) {
+      st.step = "addons";
+    } else {
+      st.data.day_index = next2;
+      st.step = "day_slot";
+    }
   } else if (slot === "matin") {
     st.step = "day_pick_matin";
     st.data._presta_page = 0;
@@ -1618,31 +1651,6 @@ if (q.data === "bk_day_prev") {
   if (!st) return;
   st.data.day_index = Math.max(0, Number(st.data.day_index || 0) - 1);
   st.step = "day_slot";
-
-    // ✅ Auto-advance to next day when the current day is complete
-    try {
-      const dates = Array.isArray(st.data.dates) ? st.data.dates : [];
-      const idx = Number(st.data.day_index || 0);
-      const curDate = dates[idx] || null;
-      const curPlan = curDate ? ensureDayPlan(st, curDate) : null;
-
-      if (curDate && curPlan && dayPlanIsComplete(curPlan)) {
-        let next = idx + 1;
-        while (next < dates.length) {
-          const dp = ensureDayPlan(st, dates[next]);
-          if (!dayPlanIsComplete(dp)) break;
-          next++;
-        }
-        if (next >= dates.length) {
-          pushStep(st, st.step);
-          st.step = "addons";
-        } else {
-          st.data.day_index = next;
-          st.step = "day_slot";
-        }
-      }
-    } catch {}
-
     setBkState(chatId, st);
     return renderBookingStep(chatId);
 }
