@@ -34,28 +34,47 @@
     });
   }
 
+  const fmtSlot = (s) =>
+    s === "matin" ? "🌅 matin" : s === "soir" ? "🌙 soir" : s === "matin_soir" ? "🌅🌙 matin+soir" : safe(s || "—");
+
+  const fmtDateFR = (iso) => {
+    const v = safe(iso);
+    if (!v) return "—";
+    // iso YYYY-MM-DD
+    const d = new Date(v + "T00:00:00");
+    if (Number.isNaN(d.getTime())) return v;
+    return d.toLocaleDateString("fr-CH", { weekday: "short", day: "2-digit", month: "2-digit", year: "numeric" });
+  };
+
+  const badgeStatus = (st) => {
+    const s = norm(st);
+    if (s === "done") return `<span class="badge text-bg-success">done</span>`;
+    if (s === "cancelled") return `<span class="badge text-bg-secondary">cancelled</span>`;
+    return `<span class="badge text-bg-warning text-dark">pending</span>`;
+  };
+
   /* ================= STATE ================= */
   let prestations = [];
   let clients = [];
   let upcoming = [];
   let past = [];
   let compta = null;
-  let agenda = [];
-  let agendaRange = 'today';
+
+  // Agenda V5
+  let agendaRange = "today";
+  let agendaItems = [];
 
   /* ================= UI: NAV ================= */
   const panels = {
     home: $("panelHome"),
-    agenda: $("panelAgenda"),
     clients: $("panelClients"),
     prestations: $("panelPrestations"),
-    bookings: $("panelBookings"),
+    bookings: $("panelBookings"), // -> Agenda
     compta: $("panelCompta"),
   };
 
   const btns = {
     home: $("btnHome"),
-    agenda: $("btnAgenda"),
     clients: $("btnClients"),
     prestations: $("btnPrestations"),
     bookings: $("btnBookings"),
@@ -68,10 +87,16 @@
 
     Object.values(panels).forEach((p) => p && p.classList.remove("active"));
     panels[key]?.classList.add("active");
+
+    // quand on ouvre l'agenda, on charge si vide
+    if (key === "bookings") {
+      if (!agendaItems?.length) {
+        loadAgenda(agendaRange).then(renderAgenda).catch(() => {});
+      }
+    }
   }
 
   btns.home?.addEventListener("click", () => setActiveNav("home"));
-  btns.agenda?.addEventListener("click", async () => { setActiveNav("agenda"); await loadAgenda(agendaRange); });
   btns.clients?.addEventListener("click", () => setActiveNav("clients"));
   btns.prestations?.addEventListener("click", () => setActiveNav("prestations"));
   btns.bookings?.addEventListener("click", () => setActiveNav("bookings"));
@@ -91,13 +116,14 @@
   $("refreshBtn")?.addEventListener("click", async () => {
     toast("↻ Refresh…");
     await loadAll();
+    await loadAgenda(agendaRange);
     renderAll();
-    await loadAgenda('today');
     toast("✅ OK");
   });
 
-  
-  /* ================= BOOKING ACTIONS (EDIT/DELETE) ================= */
+  /* ================= BOOKING ACTIONS (EDIT/DELETE) =================
+     (legacy V4 modal, on le garde au cas où tu l'utilises encore)
+  */
   let ebModal = null;
   let ebCurrentId = null;
 
@@ -109,25 +135,25 @@
   }
 
   function fillPrestationOptions(selectedId) {
-  const sel = $("ebPrestation");
-  if (!sel) return;
-  const list = (prestations || []).filter((p) => p.active);
-  sel.innerHTML = list
-    .map((p) => {
-      const badge =
-        p.category === "pack" ? "📦" :
-        p.category === "service" ? "🧾" :
-        p.category === "menage" ? "🧼" :
-        p.category === "supplement" ? "🧶" :
-        p.category === "devis" ? "🧾" : "🧾";
-      const extra =
-        p.category === "pack" ? `(${p.visits_per_day} visite/j)` :
-        p.category === "service" ? `(${p.duration_min} min)` :
-        "";
-      return `<option value="${p.id}" ${Number(p.id) === Number(selectedId) ? "selected" : ""}>${badge} ${safe(p.name)} ${extra} • ${money(p.price_chf)} CHF</option>`;
-    })
-    .join("");
-}
+    const sel = $("ebPrestation");
+    if (!sel) return;
+    const list = (prestations || []).filter((p) => p.active);
+    sel.innerHTML = list
+      .map((p) => {
+        const badge =
+          p.category === "pack" ? "📦" :
+          p.category === "service" ? "🧾" :
+          p.category === "menage" ? "🧼" :
+          p.category === "supplement" ? "🧶" :
+          p.category === "devis" ? "🧾" : "🧾";
+        const extra =
+          p.category === "pack" ? `(${p.visits_per_day} visite/j)` :
+          p.category === "service" ? `(${p.duration_min} min)` :
+          "";
+        return `<option value="${p.id}" ${Number(p.id) === Number(selectedId) ? "selected" : ""}>${badge} ${safe(p.name)} ${extra} • ${money(p.price_chf)} CHF</option>`;
+      })
+      .join("");
+  }
 
   async function openEditBooking(id) {
     try {
@@ -175,8 +201,8 @@
       toast("✅ Modifié");
       getBootstrapModal()?.hide();
       await loadAll();
+      await loadAgenda(agendaRange);
       renderAll();
-    await loadAgenda('today');
     } catch (e) {
       console.error(e);
       toast("❌ Échec modification");
@@ -195,8 +221,8 @@
       if (!r.ok) throw new Error("API");
       toast("🗑️ Supprimé");
       await loadAll();
+      await loadAgenda(agendaRange);
       renderAll();
-    await loadAgenda('today');
     } catch (e) {
       console.error(e);
       toast("❌ Échec suppression");
@@ -206,7 +232,7 @@
   $("ebSave")?.addEventListener("click", saveEditBooking);
   $("ebDelete")?.addEventListener("click", () => deleteBooking(ebCurrentId));
 
-  // Delegation click
+  // Delegation click legacy
   document.addEventListener("click", (ev) => {
     const t = ev.target;
     if (!t) return;
@@ -218,9 +244,8 @@
     if (btnD) return deleteBooking(btnD.getAttribute("data-id"));
   });
 
-/* ================= LOAD ================= */
+  /* ================= LOAD (V4 dashboard data) ================= */
   async function loadAll() {
-    // si pas Telegram, on affiche accès refusé (car API va 401)
     try {
       const [rP, rC, rU, rPa, rCo] = await Promise.all([
         apiFetch("/api/prestations"),
@@ -248,6 +273,20 @@
       upcoming = [];
       past = [];
       compta = null;
+    }
+  }
+
+  /* ================= LOAD AGENDA V5 ================= */
+  async function loadAgenda(range = "today") {
+    agendaRange = range;
+    try {
+      const r = await apiFetch(`/api/agenda?range=${encodeURIComponent(range)}`);
+      if (!r.ok) throw new Error("agenda_api");
+      agendaItems = await r.json();
+    } catch (e) {
+      console.error(e);
+      agendaItems = [];
+      toast("❌ Agenda KO");
     }
   }
 
@@ -382,6 +421,20 @@
                 ? "text-bg-warning text-dark"
                 : "text-bg-info text-dark";
 
+            const cat = norm(p.category);
+            const catBadge =
+              cat === "pack" ? `<span class="badge text-bg-warning text-dark">pack</span>` :
+              cat === "service" ? `<span class="badge text-bg-danger">service</span>` :
+              cat === "supplement" ? `<span class="badge text-bg-secondary">supplement</span>` :
+              cat === "menage" ? `<span class="badge text-bg-info text-dark">ménage</span>` :
+              cat === "devis" ? `<span class="badge text-bg-light text-dark">devis</span>` :
+              `<span class="badge text-bg-secondary">${safe(p.category)}</span>`;
+
+            const priceUnit =
+              cat === "service" ? " / visite" :
+              (cat === "supplement" || cat === "menage" || cat === "devis") ? " (unique)" :
+              " / jour";
+
             return `
               <div class="col-md-6 col-lg-4">
                 <div class="mini h-100">
@@ -389,11 +442,12 @@
                     <div class="fw-bold">${safe(p.name)}</div>
                     <span class="badge ${animalBadge}">${safe(p.animal_type)}</span>
                   </div>
-                  <div class="muted mt-1">
-                    💳 <b>${money(p.price_chf)} CHF</b> / jour
+                  <div class="mt-2 d-flex gap-2 flex-wrap">${catBadge}</div>
+                  <div class="muted mt-2">
+                    💳 <b>${money(p.price_chf)} CHF</b>${priceUnit}
                   </div>
                   <div class="muted">
-                    ⏱️ ${safe(p.duration_min)} min/j • ${safe(p.visits_per_day)} visite(s)
+                    ⏱️ ${safe(p.duration_min)} min • ${safe(p.visits_per_day)} visite(s)/j
                   </div>
                   <div class="muted small mt-2">🧾 ${safe(p.description) || "—"}</div>
                 </div>
@@ -413,46 +467,128 @@
     toast("Recherche prestation effacée");
   });
 
-  /* ================= RENDER BOOKINGS ================= */
-  function renderBookings() {
-    const up = $("bookingsUpcoming");
-    const pa = $("bookingsPast");
-    if (up) up.innerHTML = "";
-    if (pa) pa.innerHTML = "";
-
-    const makeItem = (b) => {
-      const c = b.clients?.name || "—";
-      const p = b.prestations?.name || "—";
-      const emp = b.employees?.name ? `👩‍💼 ${b.employees.name}` : "—";
-      const slot = b.slot ? b.slot.replace("matin_soir", "matin+soir") : "—";
-      const isPast = new Date(safe(b.end_date)) < new Date();
-      return `
-        <div class="list-group-item rounded-3 mb-2">
-          <div class="d-flex justify-content-between align-items-start gap-2">
-            <div>
-              <div class="fw-bold">#${b.id} • ${c}</div>
-              <div class="muted">${safe(b.start_date)} → ${safe(b.end_date)} • ${safe(b.days_count)} jour(s)</div>
-              <div class="muted">🐾 ${p} • ⏰ ${slot}</div>
-              <div class="muted">Employé: ${emp}</div>
-            </div>
-            <div class="d-flex gap-2 flex-wrap justify-content-end">
-              <button class="btn btn-sm btn-outline-warning act-edit-booking" data-id="${b.id}">✏️</button>
-              <button class="btn btn-sm btn-outline-danger act-del-booking" data-id="${b.id}">🗑️</button>
-            </div>
-          </div>
-
-          <div class="mt-2 d-flex gap-2 flex-wrap">
-            <span class="badge text-bg-danger">Total ${money(b.total_chf)} CHF</span>
-            <span class="badge text-bg-warning text-dark">ShaSitter ${money(b.company_part_chf)} CHF</span>
-            <span class="badge text-bg-secondary">Employé ${money(b.employee_part_chf)} CHF</span>
-          </div>
-        </div>
-      `;
-    };
-
-    if (up) up.innerHTML = upcoming.length ? upcoming.map(makeItem).join("") : `<div class="muted">Aucune réservation à venir.</div>`;
-    if (pa) pa.innerHTML = past.length ? past.slice(0, 30).map(makeItem).join("") : `<div class="muted">Aucune réservation passée.</div>`;
+  /* ================= RENDER AGENDA (V5) ================= */
+  function groupAgendaByDate(items) {
+    const map = new Map();
+    (items || []).forEach((x) => {
+      const d = safe(x.date);
+      if (!map.has(d)) map.set(d, []);
+      map.get(d).push(x);
+    });
+    // sort by date
+    return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0]));
   }
+
+  function renderAgenda() {
+    const wrap = $("agendaContainer");
+    if (!wrap) return;
+
+    const items = agendaItems || [];
+    if (!items.length) {
+      wrap.innerHTML = `<div class="muted">Aucune visite pour ce filtre.</div>`;
+      return;
+    }
+
+    const groups = groupAgendaByDate(items);
+
+    wrap.innerHTML = groups
+      .map(([date, arr]) => {
+        // sort slot then time
+        const sorted = arr.slice().sort((a, b) => {
+          const sa = safe(a.slot);
+          const sb = safe(b.slot);
+          if (sa !== sb) return sa.localeCompare(sb);
+          return safe(a.start_time).localeCompare(safe(b.start_time));
+        });
+
+        const morning = sorted.filter((x) => safe(x.slot) === "matin");
+        const evening = sorted.filter((x) => safe(x.slot) === "soir");
+        const other = sorted.filter((x) => safe(x.slot) !== "matin" && safe(x.slot) !== "soir");
+
+        const block = (title, list) => {
+          if (!list.length) return "";
+          const total = list.reduce((a, x) => a + Number(x.price_chf || 0), 0);
+          const dur = list.reduce((a, x) => a + Number(x.duration_min || 0), 0);
+
+          return `
+            <div class="mini mb-3">
+              <div class="d-flex justify-content-between flex-wrap gap-2">
+                <div class="fw-bold">${title}</div>
+                <div class="muted small">${list.length} visite(s) • ${money(total)} CHF • ${dur} min</div>
+              </div>
+              <div class="mt-2">
+                ${list
+                  .map((s) => {
+                    const g = safe(s.group_id);
+                    const pet = s.pet_name ? ` • 🐾 ${safe(s.pet_name)}` : "";
+                    const time = s.start_time ? `⏱️ ${safe(s.start_time).slice(0,5)} ` : "";
+                    const addr = safe(s.address_final || s.client_address);
+                    const emp = s.employee_name ? `👩‍💼 ${safe(s.employee_name)}` : "—";
+
+                    return `
+                      <div class="list-group-item rounded-3 mb-2">
+                        <div class="d-flex justify-content-between align-items-start gap-2 flex-wrap">
+                          <div>
+                            <div class="fw-bold">${time} ${safe(s.client_name)}${pet}</div>
+                            <div class="muted">${safe(s.prestation_name)} • ${money(s.price_chf)} CHF • ${safe(s.duration_min)} min</div>
+                            <div class="muted small">📍 ${addr || "—"}</div>
+                            <div class="muted small">Employé: ${emp} • ${badgeStatus(s.status)}</div>
+                            ${s.notes ? `<div class="muted small mt-1">📝 ${safe(s.notes)}</div>` : ""}
+                          </div>
+
+                          <div class="d-flex gap-2 flex-wrap justify-content-end">
+                            ${g ? `<a class="btn btn-sm btn-outline-light" href="/api/export/${encodeURIComponent(g)}" target="_blank">📅 ICS</a>` : ""}
+                            ${g ? `<a class="btn btn-sm btn-outline-warning" href="/api/documents/devis/${encodeURIComponent(g)}" target="_blank">🧾 Devis PDF</a>` : ""}
+                            ${g ? `<a class="btn btn-sm btn-outline-danger" href="/api/documents/facture/${encodeURIComponent(g)}" target="_blank">🧾 Facture PDF</a>` : ""}
+                          </div>
+                        </div>
+                      </div>
+                    `;
+                  })
+                  .join("")}
+              </div>
+            </div>
+          `;
+        };
+
+        return `
+          <div class="mb-4">
+            <div class="control-pill mb-3">
+              <div class="d-flex justify-content-between flex-wrap gap-2 align-items-center">
+                <div class="fw-bold">📅 ${fmtDateFR(date)}</div>
+                <div class="muted small">Total: ${arr.length} visite(s) • ${money(arr.reduce((a,x)=>a+Number(x.price_chf||0),0))} CHF</div>
+              </div>
+            </div>
+
+            ${block("🌅 Matin", morning)}
+            ${block("🌙 Soir", evening)}
+            ${block("📌 Autres", other)}
+          </div>
+        `;
+      })
+      .join("");
+  }
+
+  /* ================= AGENDA FILTER BUTTONS ================= */
+  function setActiveAgendaFilter(range) {
+    document.querySelectorAll(".agenda-filter").forEach((b) => b.classList.remove("active"));
+    const btn = document.querySelector(`.agenda-filter[data-range="${range}"]`);
+    btn?.classList.add("active");
+  }
+
+  document.addEventListener("click", async (ev) => {
+    const t = ev.target;
+    const b = t?.closest?.(".agenda-filter");
+    if (!b) return;
+    const range = b.getAttribute("data-range");
+    if (!range) return;
+
+    setActiveAgendaFilter(range);
+    toast("↻ Agenda…");
+    await loadAgenda(range);
+    renderAgenda();
+    toast("✅ OK");
+  });
 
   /* ================= RENDER COMPTA ================= */
   function renderCompta() {
@@ -512,124 +648,17 @@
 
   function renderAll() {
     renderHome();
-    renderAgenda();
     renderClients();
     renderPrestations();
-    renderBookings();
+    renderAgenda();
     renderCompta();
   }
 
-
-  /* ================= AGENDA V5 ================= */
-  async function loadAgenda(range = "today") {
-    agendaRange = range;
-    const qs = new URLSearchParams();
-    qs.set("range", range);
-
-    const r = await apiFetch(`/api/agenda?${qs.toString()}`);
-    if (!r.ok) {
-      toast("⛔ Agenda indisponible");
-      agenda = [];
-      renderAgenda();
-      return;
-    }
-    agenda = await r.json();
-    renderAgenda();
-  }
-
-  function groupByDate(items) {
-    const map = new Map();
-    (items || []).forEach((it) => {
-      const d = it.date;
-      if (!map.has(d)) map.set(d, []);
-      map.get(d).push(it);
-    });
-    return Array.from(map.entries()).sort((a,b)=>a[0].localeCompare(b[0]));
-  }
-
-  function renderAgenda() {
-    const box = $("agendaContainer");
-    if (!box) return;
-
-    const groups = groupByDate(agenda);
-
-    if (!groups.length) {
-      box.innerHTML = `
-        <div class="card card-soft text-white">
-          <div class="card-body">
-            <div class="text-secondary">Aucune visite pour cette période.</div>
-          </div>
-        </div>
-      `;
-      return;
-    }
-
-    const dayCard = (date, items) => {
-      const morning = items.filter(x => x.slot === "matin");
-      const evening = items.filter(x => x.slot === "soir");
-
-      const mkRow = (s) => `
-        <div class="list-item">
-          <div class="li-main">
-            <div class="li-title">
-              ${safe(s.start_time || "")} <span class="text-secondary">—</span>
-              <strong>${safe(s.client_name)}</strong>
-              ${s.pet_name ? `— <span class="text-secondary">${safe(s.pet_name)}</span>` : ""}
-            </div>
-            <div class="li-sub text-secondary small">
-              ${safe(s.prestation_name)} • ${money(s.price_chf)} CHF • ${safe(s.address_final || s.client_address || "")}
-            </div>
-            ${s.notes ? `<div class="li-sub text-secondary small">📝 ${safe(s.notes)}</div>` : ""}
-          </div>
-          <div class="li-actions">
-            <a class="btn btn-sm btn-outline-light" href="/api/documents/devis/${s.group_id}">Devis PDF</a>
-            <a class="btn btn-sm btn-outline-warning" href="/api/documents/facture/${s.group_id}">Facture PDF</a>
-            <a class="btn btn-sm btn-outline-info" href="/api/export/${s.group_id}">Google .ics</a>
-          </div>
-        </div>
-      `;
-
-      const section = (title, arr, icon) => `
-        <div class="card card-soft text-white mb-3">
-          <div class="card-body">
-            <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-2">
-              <div class="h5 mb-0">${icon} ${title}</div>
-              <div class="text-secondary small">${arr.length} visite(s)</div>
-            </div>
-            <div class="list-plain">
-              ${arr.length ? arr.map(mkRow).join("") : `<div class="text-secondary small">—</div>`}
-            </div>
-          </div>
-        </div>
-      `;
-
-      return `
-        <div class="mb-4">
-          <div class="d-flex align-items-center justify-content-between mb-2">
-            <div class="h4 mb-0">📆 ${date}</div>
-            <div class="text-secondary small">Total: ${money(items.reduce((a,x)=>a+Number(x.price_chf||0),0))} CHF</div>
-          </div>
-          ${section("Matin", morning, "🌅")}
-          ${section("Soir", evening, "🌙")}
-        </div>
-      `;
-    };
-
-    box.innerHTML = groups.map(([d, items]) => dayCard(d, items)).join("");
-  }
-
-  // Boutons filtres agenda
-  $("agToday")?.addEventListener("click", () => loadAgenda("today"));
-  $("agTomorrow")?.addEventListener("click", () => loadAgenda("tomorrow"));
-  $("agWeek")?.addEventListener("click", () => loadAgenda("week"));
-  $("agUpcoming")?.addEventListener("click", () => loadAgenda("upcoming"));
-  $("agPast")?.addEventListener("click", () => loadAgenda("past"));
-
-
   /* ================= INIT ================= */
   (async () => {
+    setActiveAgendaFilter(agendaRange);
     await loadAll();
+    await loadAgenda(agendaRange);
     renderAll();
-    await loadAgenda('today');
   })();
 })();
