@@ -40,10 +40,13 @@
   let upcoming = [];
   let past = [];
   let compta = null;
+  let agenda = [];
+  let agendaRange = 'today';
 
   /* ================= UI: NAV ================= */
   const panels = {
     home: $("panelHome"),
+    agenda: $("panelAgenda"),
     clients: $("panelClients"),
     prestations: $("panelPrestations"),
     bookings: $("panelBookings"),
@@ -52,6 +55,7 @@
 
   const btns = {
     home: $("btnHome"),
+    agenda: $("btnAgenda"),
     clients: $("btnClients"),
     prestations: $("btnPrestations"),
     bookings: $("btnBookings"),
@@ -67,6 +71,7 @@
   }
 
   btns.home?.addEventListener("click", () => setActiveNav("home"));
+  btns.agenda?.addEventListener("click", async () => { setActiveNav("agenda"); await loadAgenda(agendaRange); });
   btns.clients?.addEventListener("click", () => setActiveNav("clients"));
   btns.prestations?.addEventListener("click", () => setActiveNav("prestations"));
   btns.bookings?.addEventListener("click", () => setActiveNav("bookings"));
@@ -87,6 +92,7 @@
     toast("↻ Refresh…");
     await loadAll();
     renderAll();
+    await loadAgenda('today');
     toast("✅ OK");
   });
 
@@ -170,6 +176,7 @@
       getBootstrapModal()?.hide();
       await loadAll();
       renderAll();
+    await loadAgenda('today');
     } catch (e) {
       console.error(e);
       toast("❌ Échec modification");
@@ -189,6 +196,7 @@
       toast("🗑️ Supprimé");
       await loadAll();
       renderAll();
+    await loadAgenda('today');
     } catch (e) {
       console.error(e);
       toast("❌ Échec suppression");
@@ -504,15 +512,124 @@
 
   function renderAll() {
     renderHome();
+    renderAgenda();
     renderClients();
     renderPrestations();
     renderBookings();
     renderCompta();
   }
 
+
+  /* ================= AGENDA V5 ================= */
+  async function loadAgenda(range = "today") {
+    agendaRange = range;
+    const qs = new URLSearchParams();
+    qs.set("range", range);
+
+    const r = await apiFetch(`/api/agenda?${qs.toString()}`);
+    if (!r.ok) {
+      toast("⛔ Agenda indisponible");
+      agenda = [];
+      renderAgenda();
+      return;
+    }
+    agenda = await r.json();
+    renderAgenda();
+  }
+
+  function groupByDate(items) {
+    const map = new Map();
+    (items || []).forEach((it) => {
+      const d = it.date;
+      if (!map.has(d)) map.set(d, []);
+      map.get(d).push(it);
+    });
+    return Array.from(map.entries()).sort((a,b)=>a[0].localeCompare(b[0]));
+  }
+
+  function renderAgenda() {
+    const box = $("agendaContainer");
+    if (!box) return;
+
+    const groups = groupByDate(agenda);
+
+    if (!groups.length) {
+      box.innerHTML = `
+        <div class="card card-soft text-white">
+          <div class="card-body">
+            <div class="text-secondary">Aucune visite pour cette période.</div>
+          </div>
+        </div>
+      `;
+      return;
+    }
+
+    const dayCard = (date, items) => {
+      const morning = items.filter(x => x.slot === "matin");
+      const evening = items.filter(x => x.slot === "soir");
+
+      const mkRow = (s) => `
+        <div class="list-item">
+          <div class="li-main">
+            <div class="li-title">
+              ${safe(s.start_time || "")} <span class="text-secondary">—</span>
+              <strong>${safe(s.client_name)}</strong>
+              ${s.pet_name ? `— <span class="text-secondary">${safe(s.pet_name)}</span>` : ""}
+            </div>
+            <div class="li-sub text-secondary small">
+              ${safe(s.prestation_name)} • ${money(s.price_chf)} CHF • ${safe(s.address_final || s.client_address || "")}
+            </div>
+            ${s.notes ? `<div class="li-sub text-secondary small">📝 ${safe(s.notes)}</div>` : ""}
+          </div>
+          <div class="li-actions">
+            <a class="btn btn-sm btn-outline-light" href="/api/documents/devis/${s.group_id}">Devis PDF</a>
+            <a class="btn btn-sm btn-outline-warning" href="/api/documents/facture/${s.group_id}">Facture PDF</a>
+            <a class="btn btn-sm btn-outline-info" href="/api/export/${s.group_id}">Google .ics</a>
+          </div>
+        </div>
+      `;
+
+      const section = (title, arr, icon) => `
+        <div class="card card-soft text-white mb-3">
+          <div class="card-body">
+            <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-2">
+              <div class="h5 mb-0">${icon} ${title}</div>
+              <div class="text-secondary small">${arr.length} visite(s)</div>
+            </div>
+            <div class="list-plain">
+              ${arr.length ? arr.map(mkRow).join("") : `<div class="text-secondary small">—</div>`}
+            </div>
+          </div>
+        </div>
+      `;
+
+      return `
+        <div class="mb-4">
+          <div class="d-flex align-items-center justify-content-between mb-2">
+            <div class="h4 mb-0">📆 ${date}</div>
+            <div class="text-secondary small">Total: ${money(items.reduce((a,x)=>a+Number(x.price_chf||0),0))} CHF</div>
+          </div>
+          ${section("Matin", morning, "🌅")}
+          ${section("Soir", evening, "🌙")}
+        </div>
+      `;
+    };
+
+    box.innerHTML = groups.map(([d, items]) => dayCard(d, items)).join("");
+  }
+
+  // Boutons filtres agenda
+  $("agToday")?.addEventListener("click", () => loadAgenda("today"));
+  $("agTomorrow")?.addEventListener("click", () => loadAgenda("tomorrow"));
+  $("agWeek")?.addEventListener("click", () => loadAgenda("week"));
+  $("agUpcoming")?.addEventListener("click", () => loadAgenda("upcoming"));
+  $("agPast")?.addEventListener("click", () => loadAgenda("past"));
+
+
   /* ================= INIT ================= */
   (async () => {
     await loadAll();
     renderAll();
+    await loadAgenda('today');
   })();
 })();
