@@ -11337,3 +11337,17 @@ body{padding-bottom:72px;}
 }
 
 .
+
+
+/* ===== V5 Agenda helpers ===== */
+.list-plain { display:flex; flex-direction:column; gap:10px; }
+.list-item { display:flex; gap:12px; align-items:flex-start; justify-content:space-between; padding:12px; border:1px solid rgba(255,255,255,.10); border-radius:14px; background: rgba(255,255,255,.04); }
+.li-main { flex:1; min-width: 220px; }
+.li-title { font-size: 14px; line-height: 1.2; }
+.li-sub { margin-top: 4px; }
+.li-actions { display:flex; flex-direction:column; gap:8px; }
+.li-actions .btn { white-space: nowrap; }
+@media (max-width: 768px){
+  .list-item { flex-direction: column; }
+  .li-actions { flex-direction: row; flex-wrap: wrap; }
+}
