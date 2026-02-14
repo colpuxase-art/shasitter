@@ -5,6 +5,11 @@ const TelegramBot = require("node-telegram-bot-api");
 const path = require("path");
 const crypto = require("crypto");
 const { createClient } = require("@supabase/supabase-js");
+const cron = require("node-cron");
+const { createEvents } = require("ics");
+const PDFDocument = require("pdfkit");
+const fs = require("fs");
+
 
 const app = express();
 app.use(express.json());
@@ -18,6 +23,10 @@ const BOT_TOKEN = process.env.BOT_TOKEN;
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE;
 const WEBAPP_URL = process.env.WEBAPP_URL;
+const SHANA_CHAT_ID = process.env.SHANA_CHAT_ID; // Telegram chat id de Shana (rappels internes)
+const REMINDERS_ENABLED = (process.env.REMINDERS_ENABLED || "true").toLowerCase() === "true";
+const REMINDER_HOURS_BEFORE = Number(process.env.REMINDER_HOURS_BEFORE || 3);
+
 
 if (!BOT_TOKEN) {
   console.error("❌ BOT_TOKEN manquant");
@@ -36,7 +45,7 @@ const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE, {
 });
 
 /* ================== ADMIN ================== */
-const ADMIN_IDS = new Set([6675436692,8275234190]); // <-- ton ID Telegram
+const ADMIN_IDS = new Set([6675436692]); // <-- ton ID Telegram
 const isAdmin = (chatId) => ADMIN_IDS.has(chatId);
 
 /* ================== TELEGRAM BOT (409 FIX — STABLE) ==================
@@ -2831,4 +2840,230 @@ bk.step = "day_slot";
 });
 
 /* ================== START LISTEN ================== */
+
+/* ================== V5 — AGENDA / EXPORT / PDF ================== */
+
+// GET /api/agenda?date=YYYY-MM-DD | range=today|tomorrow|week|upcoming|past&client_id=&employee_id=&status=
+app.get("/api/agenda", async (req, res) => {
+  try {
+    const { date, range, client_id, employee_id, status } = req.query;
+
+    let q = sb.from("v_agenda_segments").select("*");
+
+    // Filtres
+    if (client_id) q = q.eq("client_id", client_id);
+    if (employee_id) q = q.eq("employee_id", employee_id);
+    if (status) q = q.eq("status", status);
+
+    const today = new Date();
+    const fmt = (d) => d.toISOString().slice(0, 10);
+
+    if (date) {
+      q = q.eq("date", date);
+    } else if (range === "today") {
+      q = q.eq("date", fmt(today));
+    } else if (range === "tomorrow") {
+      const t = new Date(today); t.setDate(t.getDate() + 1);
+      q = q.eq("date", fmt(t));
+    } else if (range === "week") {
+      const end = new Date(today); end.setDate(end.getDate() + 7);
+      q = q.gte("date", fmt(today)).lt("date", fmt(end));
+    } else if (range === "past") {
+      q = q.lt("date", fmt(today));
+    } else if (range === "upcoming") {
+      q = q.gte("date", fmt(today));
+    }
+
+    q = q.order("date", { ascending: true }).order("slot", { ascending: true }).order("start_time", { ascending: true, nullsFirst: false });
+
+    const { data, error } = await q;
+    if (error) return res.status(500).json({ error });
+    return res.json(data || []);
+  } catch (e) {
+    return res.status(500).json({ error: String(e) });
+  }
+});
+
+// Export Google Calendar (ICS)
+// GET /api/export/:groupId
+app.get("/api/export/:groupId", async (req, res) => {
+  try {
+    const groupId = req.params.groupId;
+
+    const { data, error } = await sb
+      .from("v_agenda_segments")
+      .select("*")
+      .eq("group_id", groupId)
+      .order("date", { ascending: true })
+      .order("slot", { ascending: true })
+      .order("start_time", { ascending: true, nullsFirst: false });
+
+    if (error) return res.status(500).json({ error });
+    const segments = data || [];
+    if (!segments.length) return res.status(404).send("No segments for this group_id");
+
+    const events = segments.map((seg) => {
+      const d = new Date(seg.date);
+      const y = d.getFullYear();
+      const m = d.getMonth() + 1;
+      const da = d.getDate();
+
+      // heure: start_time si dispo, sinon slot par défaut
+      let hh = seg.slot === "soir" ? 18 : 9;
+      let mm = 0;
+
+      if (seg.start_time) {
+        const [H, M] = String(seg.start_time).split(":");
+        hh = parseInt(H || "0", 10);
+        mm = parseInt(M || "0", 10);
+      }
+
+      // durée: duration_min si dispo, sinon 30
+      const durMin = Number(seg.duration_min || 30);
+
+      const title = `ShaSitter — ${seg.client_name}${seg.pet_name ? " — " + seg.pet_name : ""}`;
+      const description =
+        `Client: ${seg.client_name}\n` +
+        (seg.client_phone ? `Tel: ${seg.client_phone}\n` : "") +
+        `Adresse: ${seg.address_final || seg.client_address || ""}\n` +
+        `Créneau: ${seg.slot}\n` +
+        `Prestation: ${seg.prestation_name}\n` +
+        (seg.notes ? `Notes: ${seg.notes}\n` : "");
+
+      return {
+        title,
+        description,
+        start: [y, m, da, hh, mm],
+        duration: { minutes: durMin },
+        location: seg.address_final || seg.client_address || ""
+      };
+    });
+
+    createEvents(events, (err, value) => {
+      if (err) return res.status(500).json({ error: err });
+      res.setHeader("Content-Type", "text/calendar; charset=utf-8");
+      res.setHeader("Content-Disposition", `attachment; filename="shasitter-${groupId}.ics"`);
+      return res.send(value);
+    });
+  } catch (e) {
+    return res.status(500).json({ error: String(e) });
+  }
+});
+
+// PDF Devis/Facture
+// GET /api/documents/:type/:groupId  where type in devis|facture
+app.get("/api/documents/:type/:groupId", async (req, res) => {
+  try {
+    const { type, groupId } = { type: req.params.type, groupId: req.params.groupId };
+    if (!["devis", "facture"].includes(type)) return res.status(400).json({ error: "type must be devis or facture" });
+
+    const { data, error } = await sb
+      .from("v_agenda_segments")
+      .select("*")
+      .eq("group_id", groupId)
+      .order("date", { ascending: true })
+      .order("slot", { ascending: true });
+
+    if (error) return res.status(500).json({ error });
+    const segments = data || [];
+    if (!segments.length) return res.status(404).send("No segments for this group_id");
+
+    const first = segments[0];
+    const total = segments.reduce((acc, s) => acc + Number(s.price_chf || 0), 0);
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="${type}-${groupId}.pdf"`);
+
+    const doc = new PDFDocument({ margin: 40 });
+    doc.pipe(res);
+
+    // Header
+    doc.fontSize(20).text(`ShaSitter — ${type === "devis" ? "Devis" : "Facture"}`, { align: "left" });
+    doc.moveDown(0.5);
+    doc.fontSize(10).fillColor("#555").text(`Généré le: ${new Date().toLocaleString("fr-CH")}`);
+    doc.moveDown();
+
+    // Client
+    doc.fillColor("#000").fontSize(12).text(`Client: ${first.client_name}`);
+    if (first.client_phone) doc.text(`Téléphone: ${first.client_phone}`);
+    if (first.client_address) doc.text(`Adresse: ${first.client_address}`);
+    doc.moveDown();
+
+    // Table simple
+    doc.fontSize(12).text("Détail des visites", { underline: true });
+    doc.moveDown(0.5);
+
+    segments.forEach((s) => {
+      const line = `${s.date} — ${s.slot.toUpperCase()} — ${s.prestation_name}${s.pet_name ? " — " + s.pet_name : ""} — ${Number(s.price_chf || 0).toFixed(2)} CHF`;
+      doc.fontSize(11).text(line);
+      if (s.notes) doc.fontSize(9).fillColor("#555").text(`Notes: ${s.notes}`).fillColor("#000");
+    });
+
+    doc.moveDown();
+    doc.fontSize(14).text(`Total: ${total.toFixed(2)} CHF`, { align: "right" });
+
+    doc.end();
+  } catch (e) {
+    return res.status(500).json({ error: String(e) });
+  }
+});
+
+/* ================== V5 — Rappels internes (Shana only) ================== */
+// Simple cron: rappelle X heures avant (par défaut 3h) pour les segments "pending"
+const _sentReminders = new Map(); // key -> timestamp
+function _cleanupSent() {
+  const now = Date.now();
+  for (const [k, ts] of _sentReminders.entries()) {
+    if (now - ts > 24 * 60 * 60 * 1000) _sentReminders.delete(k);
+  }
+}
+function startV5ReminderCron() {
+  if (!REMINDERS_ENABLED) return;
+  if (!SHANA_CHAT_ID) {
+    console.warn("⚠️ SHANA_CHAT_ID manquant: rappels désactivés");
+    return;
+  }
+
+  cron.schedule("*/5 * * * *", async () => {
+    try {
+      _cleanupSent();
+
+      const now = new Date();
+      const target = new Date(now.getTime() + REMINDER_HOURS_BEFORE * 60 * 60 * 1000);
+
+      const dateStr = target.toISOString().slice(0, 10);
+
+      // On rappelle seulement pour le jour "target" (pratique) + status pending
+      const { data, error } = await sb
+        .from("v_agenda_segments")
+        .select("*")
+        .eq("date", dateStr)
+        .eq("status", "pending")
+        .order("slot", { ascending: true })
+        .order("start_time", { ascending: true, nullsFirst: false });
+
+      if (error) return;
+
+      (data || []).forEach((seg) => {
+        const key = `${seg.segment_id}:${REMINDER_HOURS_BEFORE}`;
+        if (_sentReminders.has(key)) return;
+
+        const msg =
+          `🔔 Rappel visite (${REMINDER_HOURS_BEFORE}h avant)\n\n` +
+          `Client: ${seg.client_name}\n` +
+          (seg.pet_name ? `Animal: ${seg.pet_name}\n` : "") +
+          `Adresse: ${seg.address_final || seg.client_address || ""}\n` +
+          `Créneau: ${seg.slot}\n` +
+          `Prestation: ${seg.prestation_name}\n` +
+          (seg.notes ? `Notes: ${seg.notes}\n` : "");
+
+        bot.sendMessage(SHANA_CHAT_ID, msg).catch(() => {});
+        _sentReminders.set(key, Date.now());
+      });
+    } catch {}
+  });
+}
+
+startV5ReminderCron();
+
 app.listen(PORT, () => console.log("ShaSitter server running on", PORT));
