@@ -1,209 +1,758 @@
 (() => {
-'use strict';
+  const tg = window.Telegram?.WebApp;
+  if (tg) {
+    tg.ready();
+    tg.expand();
+  }
 
-const $ = (s,r=document)=>r.querySelector(s);
-const $$ = (s,r=document)=>Array.from(r.querySelectorAll(s));
+  /* ================= HELPERS ================= */
+  const $ = (id) => document.getElementById(id);
+  const safe = (v) => (v == null ? "" : String(v));
+  const norm = (v) => safe(v).trim().toLowerCase();
+  const money = (n) => {
+    const x = Number(n || 0);
+    if (!Number.isFinite(x)) return "0.00";
+    return (Math.round(x * 100) / 100).toFixed(2);
 
-const state = {
-  clients:[],
-  prestations:[],
-  upcoming:[],
-  past:[],
-  compta:null,
-  pie:null,
-  activePanel:'home'
-};
+  const pad2 = (n) => String(n).padStart(2, "0");
+  const ymd = (d) => {
+    const x = new Date(d);
+    if (Number.isNaN(x.getTime())) return "";
+    return `${x.getFullYear()}-${pad2(x.getMonth() + 1)}-${pad2(x.getDate())}`;
+  };
+  const ymdCompact = (d) => {
+    const x = new Date(d);
+    if (Number.isNaN(x.getTime())) return "";
+    return `${x.getFullYear()}${pad2(x.getMonth() + 1)}${pad2(x.getDate())}`;
+  };
+  const addDays = (dateStr, days) => {
+    const x = new Date(dateStr);
+    x.setDate(x.getDate() + days);
+    return x;
+  };
 
-const fmt = n => (Math.round((Number(n||0))*100)/100).toFixed(2);
-const today = ()=> new Date().toISOString().slice(0,10);
+  function buildGoogleTemplateUrl(b) {
+    // all-day event: end date is exclusive => +1 day
+    const start = ymdCompact(b.start_date);
+    const end = ymdCompact(addDays(b.end_date, 1));
+    const c = b.clients?.name || "Client";
+    const p = b.prestations?.name || "Prestation";
+    const slot = b.slot ? b.slot.replace("matin_soir", "matin+soir") : "";
+    const text = encodeURIComponent(`ShaSitter • ${c} • ${p}`);
+    const details = encodeURIComponent(
+      [
+        `Réservation #${b.id}`,
+        `Dates: ${safe(b.start_date)} → ${safe(b.end_date)} (${safe(b.days_count)} jour(s))`,
+        slot ? `Créneau: ${slot}` : "",
+        b.clients?.phone ? `Téléphone: ${b.clients.phone}` : "",
+        b.clients?.address ? `Adresse: ${b.clients.address}` : "",
+        b.notes ? `Notes: ${b.notes}` : "",
+      ]
+        .filter(Boolean)
+        .join("\n")
+    );
+    const location = encodeURIComponent(b.clients?.address || "");
+    return `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${text}&dates=${start}/${end}&details=${details}&location=${location}`;
+  }
 
-function setPanel(name){
-  state.activePanel = name;
-
-  $$('.panel').forEach(p=>p.classList.remove('active'));
-  $('#panel'+name[0].toUpperCase()+name.slice(1))?.classList.add('active');
-
-  $$('.bn-item').forEach(b=>b.classList.remove('active'));
-  $('#btn'+name[0].toUpperCase()+name.slice(1))?.classList.add('active');
-}
-
-async function fetchJSON(url,opts={}){
-  const r = await fetch(url,{headers:{'Content-Type':'application/json'},...opts});
-  if(!r.ok) throw new Error(await r.text());
-  return r.json();
-}
-
-function toast(msg){
-  const t=$('#toast');
-  if(!t) return alert(msg);
-  t.textContent=msg;
-  t.style.display='block';
-  setTimeout(()=>t.style.display='none',2000);
-}
-
-/* ================= BOOKING CARD ================= */
-
-function bookingCard(b){
-  const range = b.start_date===b.end_date
-    ? b.start_date
-    : `${b.start_date} → ${b.end_date}`;
-
-  return `
-  <div class="presta-card" data-id="${b.id}">
-    <div style="display:flex;justify-content:space-between;align-items:center;">
-      <div>
-        <strong>${b.clients?.name||'—'}</strong>
-        <span style="opacity:.4;font-size:11px;">#${b.id}</span>
-      </div>
-      <div style="font-weight:700;color:#a855f7;">
-        ${fmt(b.total_chf)} CHF
-      </div>
-    </div>
-
-    <div style="opacity:.75;font-size:13px;margin-top:4px;">
-      🐾 ${b.pets?.name||'—'} · ${b.prestations?.name||'—'}
-    </div>
-
-    <div style="opacity:.5;font-size:12px;margin-top:4px;">
-      ${range}
-    </div>
-  </div>`;
-}
-
-/* ================= RENDER ================= */
-
-function renderHome(){
-  $('#upcomingList').innerHTML =
-    state.upcoming.map(bookingCard).join('') ||
-    `<div style="opacity:.6;">Aucune réservation.</div>`;
-}
-
-function renderPrestations(){
-  $('#prestationsGrid').innerHTML =
-    state.prestations.filter(p=>p.active!==false).map(p=>`
-      <div class="presta-card">
-        <div style="display:flex;justify-content:space-between;align-items:center;">
-          <strong>${p.name}</strong>
-          <span style="color:#a855f7;font-weight:700;">
-            ${fmt(p.price_chf)} CHF
-          </span>
-        </div>
-
-        <div style="opacity:.7;font-size:13px;margin-top:4px;">
-          ${p.animal_type} · ${p.category}
-          ${p.duration_min?` · ${p.duration_min} min`:''}
-        </div>
-
-        ${p.description
-          ? `<div style="opacity:.5;font-size:12px;margin-top:6px;">${p.description}</div>`
-          : ''
-        }
-      </div>
-    `).join('') ||
-    `<div style="opacity:.6;">Aucune prestation.</div>`;
-}
-
-function renderBookings(){
-  const up = state.upcoming.filter(b=>b.end_date>=today());
-  const past = state.past.filter(b=>b.end_date<today());
-
-  $('#bookingsUpcoming').innerHTML =
-    up.length
-      ? up.map(bookingCard).join('')
-      : `<div style="opacity:.6;">Rien à venir.</div>`;
-
-  $('#bookingsPast').innerHTML =
-    past.length
-      ? past.map(bookingCard).join('')
-      : `<div style="opacity:.6;">Rien en historique.</div>`;
-}
-
-function renderCompta(){
-  const c = state.compta;
-  if(!c) return;
-
-  $('#comptaTotal').textContent = fmt(c.totalAll);
-  $('#comptaEmp').textContent = fmt(c.totalEmp);
-  $('#comptaCo').textContent = fmt(c.totalCo);
-
-  const canvas = document.getElementById('comptaChart');
-  if(!canvas || !window.Chart) return;
-
-  if(state.pie) state.pie.destroy();
-
-  state.pie = new Chart(canvas,{
-    type:'doughnut',
-    data:{
-      labels:(c.topPrestations||[]).map(x=>x.prestation),
-      datasets:[{
-        data:(c.topPrestations||[]).map(x=>Number(x.total||0)),
-        backgroundColor:[
-          '#a855f7',
-          '#9333ea',
-          '#7e22ce',
-          '#6b21a8',
-          '#581c87'
-        ]
-      }]
-    },
-    options:{
-      plugins:{
-        legend:{position:'bottom'}
-      },
-      responsive:true
+  function buildICSForBookings(bookings) {
+    const dtstamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+    const lines = [];
+    lines.push("BEGIN:VCALENDAR");
+    lines.push("VERSION:2.0");
+    lines.push("PRODID:-//ShaSitter//Bookings Export//FR");
+    lines.push("CALSCALE:GREGORIAN");
+    for (const b of bookings) {
+      const uid = `booking-${b.id}@shasitter`;
+      const start = ymdCompact(b.start_date);
+      const end = ymdCompact(addDays(b.end_date, 1)); // exclusive
+      const c = b.clients?.name || "Client";
+      const p = b.prestations?.name || "Prestation";
+      const slot = b.slot ? b.slot.replace("matin_soir", "matin+soir") : "";
+      const summary = `ShaSitter • ${c} • ${p}`;
+      const desc = [
+        `Réservation #${b.id}`,
+        `Dates: ${safe(b.start_date)} → ${safe(b.end_date)} (${safe(b.days_count)} jour(s))`,
+        slot ? `Créneau: ${slot}` : "",
+        b.clients?.phone ? `Téléphone: ${b.clients.phone}` : "",
+        b.clients?.address ? `Adresse: ${b.clients.address}` : "",
+        b.notes ? `Notes: ${b.notes}` : "",
+      ]
+        .filter(Boolean)
+        .join("\n");
+      const loc = b.clients?.address || "";
+      // Basic line folding is skipped for simplicity; Google Calendar is tolerant for typical lengths.
+      lines.push("BEGIN:VEVENT");
+      lines.push(`UID:${uid}`);
+      lines.push(`DTSTAMP:${dtstamp}`);
+      lines.push(`DTSTART;VALUE=DATE:${start}`);
+      lines.push(`DTEND;VALUE=DATE:${end}`);
+      lines.push(`SUMMARY:${summary.replace(/\n/g, " ")}`);
+      lines.push(`DESCRIPTION:${desc.replace(/\n/g, "\\n")}`);
+      if (loc) lines.push(`LOCATION:${loc.replace(/\n/g, " ")}`);
+      lines.push("END:VEVENT");
     }
+    lines.push("END:VCALENDAR");
+    return lines.join("\r\n");
+  }
+
+  function downloadTextFile(filename, content, mime = "text/plain") {
+    const blob = new Blob([content], { type: mime });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      URL.revokeObjectURL(a.href);
+      a.remove();
+    }, 0);
+  }
+
+  };
+
+  function toast(msg) {
+    const el = $("toast");
+    if (!el) return;
+    el.textContent = msg;
+    el.style.display = "block";
+    clearTimeout(toast._t);
+    toast._t = setTimeout(() => (el.style.display = "none"), 1600);
+  }
+
+  function apiFetch(url) {
+    const initData = tg?.initData || "";
+    return fetch(url, {
+      cache: "no-store",
+      headers: {
+        "X-Telegram-InitData": initData,
+      },
+    });
+  }
+
+  /* ================= STATE ================= */
+  let prestations = [];
+  let clients = [];
+  let upcoming = [];
+  let past = [];
+  let compta = null;
+  let bookingsLimitUpcoming = 20;
+
+  /* ================= UI: NAV ================= */
+  const panels = {
+    home: $("panelHome"),
+    clients: $("panelClients"),
+    prestations: $("panelPrestations"),
+    bookings: $("panelBookings"),
+    compta: $("panelCompta"),
+  };
+
+  const btns = {
+    home: $("btnHome"),
+    clients: $("btnClients"),
+    prestations: $("btnPrestations"),
+    bookings: $("btnBookings"),
+    compta: $("btnCompta"),
+  };
+
+  function setActiveNav(key) {
+    Object.values(btns).forEach((b) => b && b.classList.remove("active"));
+    btns[key]?.classList.add("active");
+
+    Object.values(panels).forEach((p) => p && p.classList.remove("active"));
+    panels[key]?.classList.add("active");
+  }
+
+  btns.home?.addEventListener("click", () => setActiveNav("home"));
+  btns.clients?.addEventListener("click", () => setActiveNav("clients"));
+  btns.prestations?.addEventListener("click", () => setActiveNav("prestations"));
+  btns.bookings?.addEventListener("click", () => setActiveNav("bookings"));
+  btns.compta?.addEventListener("click", () => setActiveNav("compta"));
+
+  /* ================= THEME + CLOSE + REFRESH ================= */
+  $("closeBtn")?.addEventListener("click", () => {
+    if (tg) tg.close();
+    else window.close();
   });
 
-  $('#comptaPrestations').innerHTML =
-    (c.topPrestations||[]).map(x=>`
-      <div style="display:flex;justify-content:space-between;">
-        <span>${x.prestation}</span>
-        <strong>${fmt(x.total)} CHF</strong>
-      </div>
-    `).join('');
+  $("themeBtn")?.addEventListener("click", () => {
+    document.body.classList.toggle("shiny-mode");
+    toast(document.body.classList.contains("shiny-mode") ? "✨ Mode ON" : "✨ Mode OFF");
+  });
+
+  $("refreshBtn")?.addEventListener("click", async () => {
+    toast("↻ Refresh…");
+    await loadAll();
+    renderAll();
+    toast("✅ OK");
+  });
+
+  
+  /* ================= BOOKING ACTIONS (EDIT/DELETE) ================= */
+  let ebModal = null;
+  let ebCurrentId = null;
+
+  function getBootstrapModal() {
+    const el = document.getElementById("modalEditBooking");
+    if (!el || !window.bootstrap) return null;
+    if (!ebModal) ebModal = new window.bootstrap.Modal(el);
+    return ebModal;
+  }
+
+  function fillPrestationOptions(selectedId) {
+  const sel = $("ebPrestation");
+  if (!sel) return;
+  const list = (prestations || []).filter((p) => p.active);
+  sel.innerHTML = list
+    .map((p) => {
+      const badge =
+        p.category === "pack" ? "📦" :
+        p.category === "service" ? "🧾" :
+        p.category === "menage" ? "🧼" :
+        p.category === "supplement" ? "🧶" :
+        p.category === "devis" ? "🧾" : "🧾";
+      const extra =
+        p.category === "pack" ? `(${p.visits_per_day} visite/j)` :
+        p.category === "service" ? `(${p.duration_min} min)` :
+        "";
+      return `<option value="${p.id}" ${Number(p.id) === Number(selectedId) ? "selected" : ""}>${badge} ${safe(p.name)} ${extra} • ${money(p.price_chf)} CHF</option>`;
+    })
+    .join("");
 }
 
+  async function openEditBooking(id) {
+    try {
+      const r = await apiFetch(`/api/bookings/${id}`);
+      if (!r.ok) throw new Error("API");
+      const b = await r.json();
+
+      ebCurrentId = b.id;
+      $("ebId").textContent = String(b.id);
+      fillPrestationOptions(b.prestation_id);
+      $("ebStart").value = safe(b.start_date);
+      $("ebEnd").value = safe(b.end_date);
+      $("ebSlot").value = safe(b.slot);
+      $("ebTotalOverride").value = safe(b.total_chf);
+
+      getBootstrapModal()?.show();
+    } catch (e) {
+      console.error(e);
+      toast("❌ Impossible d’ouvrir");
+    }
+  }
+
+  async function saveEditBooking() {
+    if (!ebCurrentId) return;
+    try {
+      const payload = {
+        prestation_id: Number($("ebPrestation").value),
+        start_date: $("ebStart").value,
+        end_date: $("ebEnd").value,
+        slot: $("ebSlot").value,
+        total_override: $("ebTotalOverride").value,
+      };
+
+      const initData = tg?.initData || "";
+      const r = await fetch(`/api/bookings/${ebCurrentId}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Telegram-InitData": initData,
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!r.ok) throw new Error("API");
+      toast("✅ Modifié");
+      getBootstrapModal()?.hide();
+      await loadAll();
+      renderAll();
+    } catch (e) {
+      console.error(e);
+      toast("❌ Échec modification");
+    }
+  }
+
+  async function deleteBooking(id) {
+    if (!id) return;
+    if (!confirm(`Supprimer la réservation #${id} ?`)) return;
+    try {
+      const initData = tg?.initData || "";
+      const r = await fetch(`/api/bookings/${id}`, {
+        method: "DELETE",
+        headers: { "X-Telegram-InitData": initData },
+      });
+      if (!r.ok) throw new Error("API");
+      toast("🗑️ Supprimé");
+      await loadAll();
+      renderAll();
+    } catch (e) {
+      console.error(e);
+      toast("❌ Échec suppression");
+    }
+  }
+
+  $("ebSave")?.addEventListener("click", saveEditBooking);
+  $("ebDelete")?.addEventListener("click", () => deleteBooking(ebCurrentId));
+
+  // Delegation click
+  document.addEventListener("click", (ev) => {
+    const t = ev.target;
+    if (!t) return;
+
+    const btnE = t.closest?.(".act-edit-booking");
+    if (btnE) return openEditBooking(btnE.getAttribute("data-id"));
+
+    const btnD = t.closest?.(".act-del-booking");
+    if (btnD) return deleteBooking(btnD.getAttribute("data-id"));
+  });
+
 /* ================= LOAD ================= */
+  async function loadAll() {
+    // si pas Telegram, on affiche accès refusé (car API va 401)
+    try {
+      const [rP, rC, rU, rPa, rCo] = await Promise.all([
+        apiFetch("/api/prestations"),
+        apiFetch("/api/clients"),
+        apiFetch("/api/bookings/upcoming"),
+        apiFetch("/api/bookings/past"),
+        apiFetch("/api/compta/summary"),
+      ]);
 
-async function loadAll(){
-  try{
-    const [clients,prestations,upcoming,past,compta] = await Promise.all([
-      fetchJSON('/api/clients'),
-      fetchJSON('/api/prestations'),
-      fetchJSON('/api/bookings/upcoming'),
-      fetchJSON('/api/bookings/past'),
-      fetchJSON('/api/compta/summary')
-    ]);
+      if (!rP.ok || !rC.ok || !rU.ok || !rPa.ok || !rCo.ok) {
+        const st = [rP, rC, rU, rPa, rCo].map((r) => r.status).join(", ");
+        throw new Error(`API denied (${st})`);
+      }
 
-    state.clients=clients||[];
-    state.prestations=prestations||[];
-    state.upcoming=upcoming||[];
-    state.past=past||[];
-    state.compta=compta||null;
+      prestations = await rP.json();
+      clients = await rC.json();
+      upcoming = await rU.json();
+      past = await rPa.json();
+      compta = await rCo.json();
+    } catch (e) {
+      console.error(e);
+      toast("⛔ Accès refusé / API KO (ouvre depuis Telegram admin)");
+      prestations = [];
+      clients = [];
+      upcoming = [];
+      past = [];
+      compta = null;
+    }
+  }
 
+  /* ================= RENDER HOME ================= */
+  function renderHome() {
+    $("kpiUpcomingCount").textContent = safe(upcoming.length);
+    $("kpiPastCount").textContent = safe(past.length);
+
+    const next = upcoming[0];
+    $("kpiNextBooking").textContent = next
+      ? `${safe(next.start_date)} • ${safe(next.clients?.name)} • ${safe(next.prestations?.name)}`
+      : "—";
+
+    $("kpiTotalAll").textContent = compta ? money(compta.totalAll) : "—";
+    $("kpiTotalCompany").textContent = compta ? money(compta.totalCompany) : "—";
+    $("kpiTotalEmployees").textContent = compta ? money(compta.totalEmployee) : "—";
+
+    // Home lists
+    const upEl = $("upcomingList");
+    const paEl = $("pastList");
+    if (upEl) upEl.innerHTML = "";
+    if (paEl) paEl.innerHTML = "";
+
+    const makeItem = (b) => {
+      const c = b.clients?.name || "—";
+      const p = b.prestations?.name || "—";
+      const emp = b.employees?.name ? ` • 👩‍💼 ${b.employees.name}` : "";
+      const slot = b.slot ? ` • ${b.slot.replace("matin_soir", "matin+soir")}` : "";
+      return `
+        <div class="list-group-item rounded-3 mb-2">
+          <div class="d-flex justify-content-between flex-wrap gap-2">
+            <div>
+              <div class="fw-bold">#${b.id} • ${c}</div>
+              <div class="muted">${safe(b.start_date)} → ${safe(b.end_date)}${slot}</div>
+              <div class="muted">🐾 ${p}${emp}</div>
+            </div>
+            <div class="text-end">
+              <div class="badge text-bg-danger">${money(b.total_chf)} CHF</div>
+              <div class="muted small">${safe(b.days_count)} jour(s)</div>
+            </div>
+          </div>
+        </div>
+      `;
+    };
+
+    if (upEl) {
+      const list = upcoming.slice(0, 8);
+      upEl.innerHTML = list.length ? list.map(makeItem).join("") : `<div class="muted">Aucune réservation à venir.</div>`;
+    }
+
+    if (paEl) {
+      const list = past.slice(0, 8);
+      paEl.innerHTML = list.length ? list.map(makeItem).join("") : `<div class="muted">Aucune réservation passée.</div>`;
+    }
+  }
+
+
+  function fillBookingsClientFilter() {
+    const sel = $("bookingsClientFilter");
+    if (!sel) return;
+    const current = sel.value || "all";
+    sel.innerHTML = `<option value="all">Tous les clients</option>` + clients
+      .slice()
+      .sort((a, b) => norm(a.name).localeCompare(norm(b.name)))
+      .map((c) => `<option value="${c.id}">${safe(c.name)}</option>`)
+      .join("");
+    // restore selection if possible
+    sel.value = [...sel.options].some((o) => o.value === current) ? current : "all";
+  }
+
+
+  /* ================= RENDER CLIENTS ================= */
+  function renderClients() {
+    const list = $("clientsList");
+    if (!list) return;
+
+    const q = norm($("clientsSearch")?.value);
+    const items = clients.filter((c) => {
+      if (!q) return true;
+      const hay = [c.name, c.phone, c.address, c.notes].map(norm).join(" ");
+      return hay.includes(q);
+    });
+
+    if (!items.length) {
+      list.innerHTML = `<div class="muted">Aucun client.</div>`;
+      return;
+    }
+
+    list.innerHTML = `
+      <div class="row g-3">
+        ${items
+          .map((c) => {
+            return `
+              <div class="col-md-6">
+                <div class="mini">
+                  <div class="d-flex justify-content-between gap-2">
+                    <div class="fw-bold">#${c.id} • ${safe(c.name)}</div>
+                    <span class="badge text-bg-warning text-dark">Client</span>
+                  </div>
+                  <div class="muted mt-1">📞 ${safe(c.phone) || "—"}</div>
+                  <div class="muted">📍 ${safe(c.address) || "—"}</div>
+                  <div class="muted small mt-2">📝 ${safe(c.notes) || "—"}</div>
+                </div>
+              </div>
+            `;
+          })
+          .join("")}
+      </div>
+    `;
+  }
+
+  $("clientsSearch")?.addEventListener("input", renderClients);
+  $("clientsClear")?.addEventListener("click", () => {
+    $("clientsSearch").value = "";
+    renderClients();
+    toast("Recherche client effacée");
+  });
+
+  /* ================= RENDER PRESTATIONS ================= */
+  function renderPrestations() {
+    const grid = $("prestationsGrid");
+    if (!grid) return;
+
+    const q = norm($("prestaSearch")?.value);
+    const animal = $("prestaAnimalFilter")?.value || "all";
+
+    const items = prestations.filter((p) => {
+      if (animal !== "all" && norm(p.animal_type) !== animal) return false;
+      if (!q) return true;
+      const hay = [p.name, p.animal_type, p.description, p.price_chf, p.visits_per_day, p.duration_min].map(norm).join(" ");
+      return hay.includes(q);
+    });
+
+    if (!items.length) {
+      grid.innerHTML = `<div class="muted">Aucune prestation.</div>`;
+      return;
+    }
+
+    grid.innerHTML = `
+      <div class="row g-3">
+        ${items
+          .map((p) => {
+            const animalBadge =
+              norm(p.animal_type) === "chat"
+                ? "text-bg-danger"
+                : norm(p.animal_type) === "lapin"
+                ? "text-bg-warning text-dark"
+                : "text-bg-info text-dark";
+
+            return `
+              <div class="col-md-6 col-lg-4">
+                <div class="mini h-100">
+                  <div class="d-flex justify-content-between gap-2">
+                    <div class="fw-bold">${safe(p.name)}</div>
+                    <span class="badge ${animalBadge}">${safe(p.animal_type)}</span>
+                  </div>
+                  <div class="muted mt-1">
+                    💳 <b>${money(p.price_chf)} CHF</b> / jour
+                  </div>
+                  <div class="muted">
+                    ⏱️ ${safe(p.duration_min)} min/j • ${safe(p.visits_per_day)} visite(s)
+                  </div>
+                  <div class="muted small mt-2">🧾 ${safe(p.description) || "—"}</div>
+                </div>
+              </div>
+            `;
+          })
+          .join("")}
+      </div>
+    `;
+  }
+
+  $("prestaSearch")?.addEventListener("input", renderPrestations);
+  $("prestaAnimalFilter")?.addEventListener("change", renderPrestations);
+  $("prestaClear")?.addEventListener("click", () => {
+    $("prestaSearch").value = "";
+    renderPrestations();
+    toast("Recherche prestation effacée");
+  });
+
+  /* ================= BOOKINGS FILTERS + EXPORT ================= */
+  ["bookingsClientFilter", "bookingsFrom", "bookingsTo"].forEach((id) => {
+    const el = $(id);
+    if (el) el.addEventListener("change", () => {
+      bookingsLimitUpcoming = 20;
+      renderBookings();
+    });
+  });
+
+  $("bookingsReset")?.addEventListener("click", () => {
+    if ($("bookingsClientFilter")) $("bookingsClientFilter").value = "all";
+    if ($("bookingsFrom")) $("bookingsFrom").value = "";
+    if ($("bookingsTo")) $("bookingsTo").value = "";
+    bookingsLimitUpcoming = 20;
+    renderBookings();
+    toast("Filtres réinitialisés");
+  });
+
+  $("bookingsExportAll")?.addEventListener("click", () => {
+    const list = filterBookings(upcoming).sort((a, b) => new Date(a.start_date) - new Date(b.start_date));
+    if (!list.length) return toast("Rien à exporter (à venir)");
+    const ics = buildICSForBookings(list);
+    downloadTextFile(`shasitter-bookings-${Date.now()}.ics`, ics, "text/calendar");
+    toast("Export .ics prêt (import Google Agenda)");
+  });
+
+  document.addEventListener("click", (e) => {
+    const btn = e.target.closest(".act-export-ics");
+    if (!btn) return;
+    const id = Number(btn.dataset.id);
+    const b = [...upcoming, ...past].find((x) => Number(x.id) === id);
+    if (!b) return;
+    const ics = buildICSForBookings([b]);
+    downloadTextFile(`booking-${id}.ics`, ics, "text/calendar");
+    toast("Fichier .ics téléchargé");
+  });
+
+
+  /* ================= RENDER BOOKINGS ================= */
+  function getBookingsFilters() {
+    const clientId = $("bookingsClientFilter")?.value || "all";
+    const from = $("bookingsFrom")?.value || "";
+    const to = $("bookingsTo")?.value || "";
+    return { clientId, from, to };
+  }
+
+  function filterBookings(list) {
+    const { clientId, from, to } = getBookingsFilters();
+
+    return list.filter((b) => {
+      if (clientId !== "all" && String(b.client_id) !== String(clientId)) return false;
+
+      // overlap filter: booking range intersects [from,to]
+      if (from) {
+        const f = new Date(from);
+        const end = new Date(b.end_date);
+        if (end < f) return false;
+      }
+      if (to) {
+        const t = new Date(to);
+        const start = new Date(b.start_date);
+        if (start > t) return false;
+      }
+      return true;
+    });
+  }
+
+  function groupByWeek(list) {
+    const map = new Map();
+    for (const b of list) {
+      const d = new Date(b.start_date);
+      // week key: Monday of that week
+      const day = (d.getDay() + 6) % 7; // 0=Mon
+      const mon = new Date(d);
+      mon.setDate(d.getDate() - day);
+      const key = ymd(mon);
+      if (!map.has(key)) map.set(key, []);
+      map.get(key).push(b);
+    }
+    // sort keys asc
+    return [...map.entries()].sort((a, b) => new Date(a[0]) - new Date(b[0]));
+  }
+
+  function renderBookings() {
+    const up = $("bookingsUpcoming");
+    const pa = $("bookingsPast");
+    if (up) up.innerHTML = "";
+    if (pa) pa.innerHTML = "";
+
+    const upcomingF = filterBookings(upcoming).sort((a, b) => new Date(a.start_date) - new Date(b.start_date));
+    const pastF = filterBookings(past).sort((a, b) => new Date(b.start_date) - new Date(a.start_date));
+
+    const makeItem = (b) => {
+      const c = b.clients?.name || "—";
+      const p = b.prestations?.name || "—";
+      const emp = b.employees?.name ? `👩‍💼 ${b.employees.name}` : "—";
+      const slot = b.slot ? b.slot.replace("matin_soir", "matin+soir") : "—";
+      return `
+        <div class="list-group-item rounded-3 mb-2">
+          <div class="d-flex justify-content-between align-items-start gap-2">
+            <div>
+              <div class="fw-bold">#${b.id} • ${c}</div>
+              <div class="muted">${safe(b.start_date)} → ${safe(b.end_date)} • ${safe(b.days_count)} jour(s)</div>
+              <div class="muted">🐾 ${p} • ⏰ ${slot}</div>
+              <div class="muted">Employé: ${emp}</div>
+            </div>
+            <div class="d-flex gap-2 flex-wrap justify-content-end">
+              <a class="btn btn-sm btn-success" target="_blank" rel="noopener" href="${buildGoogleTemplateUrl(b)}">📅 Google</a>
+              <button class="btn btn-sm btn-outline-success act-export-ics" data-id="${b.id}">⬇️ .ics</button>
+              <button class="btn btn-sm btn-outline-warning act-edit-booking" data-id="${b.id}">✏️</button>
+              <button class="btn btn-sm btn-outline-danger act-del-booking" data-id="${b.id}">🗑️</button>
+            </div>
+          </div>
+
+          <div class="mt-2 d-flex gap-2 flex-wrap">
+            <span class="badge text-bg-danger">Total ${money(b.total_chf)} CHF</span>
+            <span class="badge text-bg-warning text-dark">ShaSitter ${money(b.company_part_chf)} CHF</span>
+            <span class="badge text-bg-secondary">Employé ${money(b.employee_part_chf)} CHF</span>
+          </div>
+        </div>
+      `;
+    };
+
+    const renderGrouped = (list, el, limit = null) => {
+      if (!el) return;
+      if (!list.length) {
+        el.innerHTML = `<div class="muted">Aucune réservation.</div>`;
+        return;
+      }
+      const limited = limit == null ? list : list.slice(0, limit);
+
+      const groups = groupByWeek(limited);
+      el.innerHTML = groups
+        .map(([weekMon, items]) => {
+          const title = `Semaine du ${weekMon}`;
+          return `
+            <details class="mb-2" open>
+              <summary class="muted" style="cursor:pointer; user-select:none;">${title} • ${items.length} réservation(s)</summary>
+              <div class="mt-2">${items.map(makeItem).join("")}</div>
+            </details>
+          `;
+        })
+        .join("");
+    };
+
+    renderGrouped(upcomingF, up, bookingsLimitUpcoming);
+    renderGrouped(pastF.slice(0, 30), pa, null);
+
+    // bouton "afficher plus" (à venir)
+    if (up) {
+      const more = upcomingF.length > bookingsLimitUpcoming;
+      const footerId = "bookingsUpcomingMore";
+      const existing = $(footerId);
+      if (existing) existing.remove();
+      if (more) {
+        const div = document.createElement("div");
+        div.id = footerId;
+        div.className = "mt-2";
+        div.innerHTML = `<button class="btn btn-outline-light w-100" type="button">Afficher plus (${upcomingF.length - bookingsLimitUpcoming})</button>`;
+        div.querySelector("button").addEventListener("click", () => {
+          bookingsLimitUpcoming += 20;
+          renderBookings();
+        });
+        up.appendChild(div);
+      }
+    }
+  }
+
+  /* ================= RENDER COMPTA ================= */
+  function renderCompta() {
+    $("comptaTotal").textContent = compta ? money(compta.totalAll) : "—";
+    $("comptaEmp").textContent = compta ? money(compta.totalEmployee) : "—";
+    $("comptaCo").textContent = compta ? money(compta.totalCompany) : "—";
+
+    const monthsEl = $("comptaMonths");
+    const clientsEl = $("comptaClients");
+    const prestaEl = $("comptaPrestations");
+
+    if (!compta) {
+      if (monthsEl) monthsEl.innerHTML = `<div class="muted">—</div>`;
+      if (clientsEl) clientsEl.innerHTML = `<div class="muted">—</div>`;
+      if (prestaEl) prestaEl.innerHTML = `<div class="muted">—</div>`;
+      return;
+    }
+
+    // Month bars
+    if (monthsEl) {
+      const max = Math.max(1, ...(compta.months || []).map((x) => Number(x.total || 0)));
+      monthsEl.innerHTML = (compta.months || [])
+        .slice(-12)
+        .map((m) => {
+          const pct = Math.min(100, Math.round((Number(m.total || 0) / max) * 100));
+          return `
+            <div class="mb-2">
+              <div class="d-flex justify-content-between">
+                <div class="muted">${safe(m.month)}</div>
+                <div class="fw-bold">${money(m.total)} CHF</div>
+              </div>
+              <div style="height:10px;border-radius:999px;background:rgba(255,255,255,.08);overflow:hidden;border:1px solid rgba(255,255,255,.10);">
+                <div style="height:100%;width:${pct}%;background:rgba(255,193,7,.60)"></div>
+              </div>
+            </div>
+          `;
+        })
+        .join("");
+    }
+
+    // Top clients
+    if (clientsEl) {
+      clientsEl.innerHTML = (compta.topClients || [])
+        .slice(0, 10)
+        .map((c) => `<div class="d-flex justify-content-between mb-1"><div class="muted">${safe(c.name)}</div><div class="fw-bold">${money(c.total)} CHF</div></div>`)
+        .join("") || `<div class="muted">—</div>`;
+    }
+
+    // Top prestas
+    if (prestaEl) {
+      prestaEl.innerHTML = (compta.topPrestations || [])
+        .slice(0, 10)
+        .map((p) => `<div class="d-flex justify-content-between mb-1"><div class="muted">${safe(p.name)}</div><div class="fw-bold">${money(p.total)} CHF</div></div>`)
+        .join("") || `<div class="muted">—</div>`;
+    }
+  }
+
+  function renderAll() {
     renderHome();
+    renderClients();
+    fillBookingsClientFilter();
     renderPrestations();
     renderBookings();
     renderCompta();
-
-  }catch(e){
-    console.error(e);
-    toast("Erreur chargement");
   }
-}
 
-/* ================= EVENTS ================= */
-
-function wire(){
-  $('#btnHome')?.addEventListener('click',()=>setPanel('home'));
-  $('#btnPrestations')?.addEventListener('click',()=>setPanel('prestations'));
-  $('#btnBookings')?.addEventListener('click',()=>setPanel('bookings'));
-  $('#btnCompta')?.addEventListener('click',()=>setPanel('compta'));
-}
-
-document.addEventListener('DOMContentLoaded',()=>{
-  wire();
-  loadAll();
-});
-
+  /* ================= INIT ================= */
+  (async () => {
+    await loadAll();
+    renderAll();
+  })();
 })();
