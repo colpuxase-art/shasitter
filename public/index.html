@@ -272,7 +272,30 @@
 
         <!-- ===================== BOOKINGS ===================== -->
         <section id="panelBookings" class="panel">
-          <div class="row g-4">
+          
+
+          <div class="card card-soft text-white mb-4">
+            <div class="card-body">
+              <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+                <div>
+                  <h2 class="h5 mb-1">📅 Réservations — filtres & export</h2>
+                  <div class="muted">Filtre par client / dates, puis export Google Agenda (.ics ou lien).</div>
+                </div>
+                <div class="control-pill">
+                  <div class="d-flex flex-wrap gap-2 align-items-center">
+                    <select id="bookingsClientFilter" class="form-select bg-dark text-white border-secondary" style="width:auto; min-width:220px;">
+                      <option value="all">Tous les clients</option>
+                    </select>
+                    <input id="bookingsFrom" class="form-control bg-dark text-white border-secondary" type="date" />
+                    <input id="bookingsTo" class="form-control bg-dark text-white border-secondary" type="date" />
+                    <button id="bookingsReset" class="btn btn-outline-light" type="button">Réinitialiser</button>
+                    <button id="bookingsExportAll" class="btn btn-success" type="button">Exporter (.ics)</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+<div class="row g-4">
             <div class="col-lg-6">
               <div class="card card-soft text-white">
                 <div class="card-body">

@@ -13,6 +13,102 @@
     const x = Number(n || 0);
     if (!Number.isFinite(x)) return "0.00";
     return (Math.round(x * 100) / 100).toFixed(2);
+
+  const pad2 = (n) => String(n).padStart(2, "0");
+  const ymd = (d) => {
+    const x = new Date(d);
+    if (Number.isNaN(x.getTime())) return "";
+    return `${x.getFullYear()}-${pad2(x.getMonth() + 1)}-${pad2(x.getDate())}`;
+  };
+  const ymdCompact = (d) => {
+    const x = new Date(d);
+    if (Number.isNaN(x.getTime())) return "";
+    return `${x.getFullYear()}${pad2(x.getMonth() + 1)}${pad2(x.getDate())}`;
+  };
+  const addDays = (dateStr, days) => {
+    const x = new Date(dateStr);
+    x.setDate(x.getDate() + days);
+    return x;
+  };
+
+  function buildGoogleTemplateUrl(b) {
+    // all-day event: end date is exclusive => +1 day
+    const start = ymdCompact(b.start_date);
+    const end = ymdCompact(addDays(b.end_date, 1));
+    const c = b.clients?.name || "Client";
+    const p = b.prestations?.name || "Prestation";
+    const slot = b.slot ? b.slot.replace("matin_soir", "matin+soir") : "";
+    const text = encodeURIComponent(`ShaSitter • ${c} • ${p}`);
+    const details = encodeURIComponent(
+      [
+        `Réservation #${b.id}`,
+        `Dates: ${safe(b.start_date)} → ${safe(b.end_date)} (${safe(b.days_count)} jour(s))`,
+        slot ? `Créneau: ${slot}` : "",
+        b.clients?.phone ? `Téléphone: ${b.clients.phone}` : "",
+        b.clients?.address ? `Adresse: ${b.clients.address}` : "",
+        b.notes ? `Notes: ${b.notes}` : "",
+      ]
+        .filter(Boolean)
+        .join("\n")
+    );
+    const location = encodeURIComponent(b.clients?.address || "");
+    return `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${text}&dates=${start}/${end}&details=${details}&location=${location}`;
+  }
+
+  function buildICSForBookings(bookings) {
+    const dtstamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+    const lines = [];
+    lines.push("BEGIN:VCALENDAR");
+    lines.push("VERSION:2.0");
+    lines.push("PRODID:-//ShaSitter//Bookings Export//FR");
+    lines.push("CALSCALE:GREGORIAN");
+    for (const b of bookings) {
+      const uid = `booking-${b.id}@shasitter`;
+      const start = ymdCompact(b.start_date);
+      const end = ymdCompact(addDays(b.end_date, 1)); // exclusive
+      const c = b.clients?.name || "Client";
+      const p = b.prestations?.name || "Prestation";
+      const slot = b.slot ? b.slot.replace("matin_soir", "matin+soir") : "";
+      const summary = `ShaSitter • ${c} • ${p}`;
+      const desc = [
+        `Réservation #${b.id}`,
+        `Dates: ${safe(b.start_date)} → ${safe(b.end_date)} (${safe(b.days_count)} jour(s))`,
+        slot ? `Créneau: ${slot}` : "",
+        b.clients?.phone ? `Téléphone: ${b.clients.phone}` : "",
+        b.clients?.address ? `Adresse: ${b.clients.address}` : "",
+        b.notes ? `Notes: ${b.notes}` : "",
+      ]
+        .filter(Boolean)
+        .join("\n");
+      const loc = b.clients?.address || "";
+      // Basic line folding is skipped for simplicity; Google Calendar is tolerant for typical lengths.
+      lines.push("BEGIN:VEVENT");
+      lines.push(`UID:${uid}`);
+      lines.push(`DTSTAMP:${dtstamp}`);
+      lines.push(`DTSTART;VALUE=DATE:${start}`);
+      lines.push(`DTEND;VALUE=DATE:${end}`);
+      lines.push(`SUMMARY:${summary.replace(/\n/g, " ")}`);
+      lines.push(`DESCRIPTION:${desc.replace(/\n/g, "\\n")}`);
+      if (loc) lines.push(`LOCATION:${loc.replace(/\n/g, " ")}`);
+      lines.push("END:VEVENT");
+    }
+    lines.push("END:VCALENDAR");
+    return lines.join("\r\n");
+  }
+
+  function downloadTextFile(filename, content, mime = "text/plain") {
+    const blob = new Blob([content], { type: mime });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      URL.revokeObjectURL(a.href);
+      a.remove();
+    }, 0);
+  }
+
   };
 
   function toast(msg) {
@@ -40,6 +136,7 @@
   let upcoming = [];
   let past = [];
   let compta = null;
+  let bookingsLimitUpcoming = 20;
 
   /* ================= UI: NAV ================= */
   const panels = {
@@ -296,6 +393,21 @@
     }
   }
 
+
+  function fillBookingsClientFilter() {
+    const sel = $("bookingsClientFilter");
+    if (!sel) return;
+    const current = sel.value || "all";
+    sel.innerHTML = `<option value="all">Tous les clients</option>` + clients
+      .slice()
+      .sort((a, b) => norm(a.name).localeCompare(norm(b.name)))
+      .map((c) => `<option value="${c.id}">${safe(c.name)}</option>`)
+      .join("");
+    // restore selection if possible
+    sel.value = [...sel.options].some((o) => o.value === current) ? current : "all";
+  }
+
+
   /* ================= RENDER CLIENTS ================= */
   function renderClients() {
     const list = $("clientsList");
@@ -405,19 +517,103 @@
     toast("Recherche prestation effacée");
   });
 
+  /* ================= BOOKINGS FILTERS + EXPORT ================= */
+  ["bookingsClientFilter", "bookingsFrom", "bookingsTo"].forEach((id) => {
+    const el = $(id);
+    if (el) el.addEventListener("change", () => {
+      bookingsLimitUpcoming = 20;
+      renderBookings();
+    });
+  });
+
+  $("bookingsReset")?.addEventListener("click", () => {
+    if ($("bookingsClientFilter")) $("bookingsClientFilter").value = "all";
+    if ($("bookingsFrom")) $("bookingsFrom").value = "";
+    if ($("bookingsTo")) $("bookingsTo").value = "";
+    bookingsLimitUpcoming = 20;
+    renderBookings();
+    toast("Filtres réinitialisés");
+  });
+
+  $("bookingsExportAll")?.addEventListener("click", () => {
+    const list = filterBookings(upcoming).sort((a, b) => new Date(a.start_date) - new Date(b.start_date));
+    if (!list.length) return toast("Rien à exporter (à venir)");
+    const ics = buildICSForBookings(list);
+    downloadTextFile(`shasitter-bookings-${Date.now()}.ics`, ics, "text/calendar");
+    toast("Export .ics prêt (import Google Agenda)");
+  });
+
+  document.addEventListener("click", (e) => {
+    const btn = e.target.closest(".act-export-ics");
+    if (!btn) return;
+    const id = Number(btn.dataset.id);
+    const b = [...upcoming, ...past].find((x) => Number(x.id) === id);
+    if (!b) return;
+    const ics = buildICSForBookings([b]);
+    downloadTextFile(`booking-${id}.ics`, ics, "text/calendar");
+    toast("Fichier .ics téléchargé");
+  });
+
+
   /* ================= RENDER BOOKINGS ================= */
+  function getBookingsFilters() {
+    const clientId = $("bookingsClientFilter")?.value || "all";
+    const from = $("bookingsFrom")?.value || "";
+    const to = $("bookingsTo")?.value || "";
+    return { clientId, from, to };
+  }
+
+  function filterBookings(list) {
+    const { clientId, from, to } = getBookingsFilters();
+
+    return list.filter((b) => {
+      if (clientId !== "all" && String(b.client_id) !== String(clientId)) return false;
+
+      // overlap filter: booking range intersects [from,to]
+      if (from) {
+        const f = new Date(from);
+        const end = new Date(b.end_date);
+        if (end < f) return false;
+      }
+      if (to) {
+        const t = new Date(to);
+        const start = new Date(b.start_date);
+        if (start > t) return false;
+      }
+      return true;
+    });
+  }
+
+  function groupByWeek(list) {
+    const map = new Map();
+    for (const b of list) {
+      const d = new Date(b.start_date);
+      // week key: Monday of that week
+      const day = (d.getDay() + 6) % 7; // 0=Mon
+      const mon = new Date(d);
+      mon.setDate(d.getDate() - day);
+      const key = ymd(mon);
+      if (!map.has(key)) map.set(key, []);
+      map.get(key).push(b);
+    }
+    // sort keys asc
+    return [...map.entries()].sort((a, b) => new Date(a[0]) - new Date(b[0]));
+  }
+
   function renderBookings() {
     const up = $("bookingsUpcoming");
     const pa = $("bookingsPast");
     if (up) up.innerHTML = "";
     if (pa) pa.innerHTML = "";
 
+    const upcomingF = filterBookings(upcoming).sort((a, b) => new Date(a.start_date) - new Date(b.start_date));
+    const pastF = filterBookings(past).sort((a, b) => new Date(b.start_date) - new Date(a.start_date));
+
     const makeItem = (b) => {
       const c = b.clients?.name || "—";
       const p = b.prestations?.name || "—";
       const emp = b.employees?.name ? `👩‍💼 ${b.employees.name}` : "—";
       const slot = b.slot ? b.slot.replace("matin_soir", "matin+soir") : "—";
-      const isPast = new Date(safe(b.end_date)) < new Date();
       return `
         <div class="list-group-item rounded-3 mb-2">
           <div class="d-flex justify-content-between align-items-start gap-2">
@@ -428,6 +624,8 @@
               <div class="muted">Employé: ${emp}</div>
             </div>
             <div class="d-flex gap-2 flex-wrap justify-content-end">
+              <a class="btn btn-sm btn-success" target="_blank" rel="noopener" href="${buildGoogleTemplateUrl(b)}">📅 Google</a>
+              <button class="btn btn-sm btn-outline-success act-export-ics" data-id="${b.id}">⬇️ .ics</button>
               <button class="btn btn-sm btn-outline-warning act-edit-booking" data-id="${b.id}">✏️</button>
               <button class="btn btn-sm btn-outline-danger act-del-booking" data-id="${b.id}">🗑️</button>
             </div>
@@ -442,8 +640,49 @@
       `;
     };
 
-    if (up) up.innerHTML = upcoming.length ? upcoming.map(makeItem).join("") : `<div class="muted">Aucune réservation à venir.</div>`;
-    if (pa) pa.innerHTML = past.length ? past.slice(0, 30).map(makeItem).join("") : `<div class="muted">Aucune réservation passée.</div>`;
+    const renderGrouped = (list, el, limit = null) => {
+      if (!el) return;
+      if (!list.length) {
+        el.innerHTML = `<div class="muted">Aucune réservation.</div>`;
+        return;
+      }
+      const limited = limit == null ? list : list.slice(0, limit);
+
+      const groups = groupByWeek(limited);
+      el.innerHTML = groups
+        .map(([weekMon, items]) => {
+          const title = `Semaine du ${weekMon}`;
+          return `
+            <details class="mb-2" open>
+              <summary class="muted" style="cursor:pointer; user-select:none;">${title} • ${items.length} réservation(s)</summary>
+              <div class="mt-2">${items.map(makeItem).join("")}</div>
+            </details>
+          `;
+        })
+        .join("");
+    };
+
+    renderGrouped(upcomingF, up, bookingsLimitUpcoming);
+    renderGrouped(pastF.slice(0, 30), pa, null);
+
+    // bouton "afficher plus" (à venir)
+    if (up) {
+      const more = upcomingF.length > bookingsLimitUpcoming;
+      const footerId = "bookingsUpcomingMore";
+      const existing = $(footerId);
+      if (existing) existing.remove();
+      if (more) {
+        const div = document.createElement("div");
+        div.id = footerId;
+        div.className = "mt-2";
+        div.innerHTML = `<button class="btn btn-outline-light w-100" type="button">Afficher plus (${upcomingF.length - bookingsLimitUpcoming})</button>`;
+        div.querySelector("button").addEventListener("click", () => {
+          bookingsLimitUpcoming += 20;
+          renderBookings();
+        });
+        up.appendChild(div);
+      }
+    }
   }
 
   /* ================= RENDER COMPTA ================= */
@@ -505,6 +744,7 @@
   function renderAll() {
     renderHome();
     renderClients();
+    fillBookingsClientFilter();
     renderPrestations();
     renderBookings();
     renderCompta();
