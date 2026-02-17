@@ -323,6 +323,13 @@ function getDayPlan(d, dateISO) {
   if (!d.day_plans[dateISO]) d.day_plans[dateISO] = { slot: null, matin_id: null, soir_id: null };
   return d.day_plans[dateISO];
 }
+
+// Alias utilisé par certains callbacks (évite ReferenceError)
+function ensureDayPlan(st, dateISO) {
+  const data = st?.data || st || {};
+  return getDayPlan(data, dateISO);
+}
+
 function dayPlanIsComplete(plan) {
   if (!plan || !plan.slot) return false;
   if (plan.slot === "none") return true;
@@ -702,12 +709,12 @@ app.get("/api/compta/summary", requireAdminWebApp, async (req, res) => {
     const topClients = [...byClient.entries()]
       .sort((a, b) => b[1] - a[1])
       .slice(0, 20)
-      .map(([id, total]) => ({ id: Number(id), name: cName.get(id) || `Client #${id}`, total: money2(total) }));
+      .map(([id, total]) => ({ id: Number(id), client: cName.get(id) || `Client #${id}`, name: cName.get(id) || `Client #${id}`, total: money2(total) }));
 
     const topPrestations = [...byPresta.entries()]
       .sort((a, b) => b[1] - a[1])
       .slice(0, 20)
-      .map(([id, total]) => ({ id: Number(id), name: pName.get(id) || `Prestation #${id}`, total: money2(total) }));
+      .map(([id, total]) => ({ id: Number(id), prestation: pName.get(id) || `Prestation #${id}`, name: pName.get(id) || `Prestation #${id}`, total: money2(total) }));
 
     res.json({
       totalAll: money2(totalAll),
@@ -955,9 +962,6 @@ async function applyDuoDiscountAcrossPeriod(segs, petAnimalType) {
 
   return { segs, duoSummary };
 }
-
-// Safety: make sure the function exists in global scope (helps if referenced dynamically)
-globalThis.applyDuoDiscountAcrossPeriod = applyDuoDiscountAcrossPeriod;
 
 function filterPrestations(prestas, { categories, animal_type, visits_per_day }) {
   const cats = Array.isArray(categories) ? categories : (categories ? [categories] : null);
@@ -1597,23 +1601,12 @@ try {
 bot.onText(/\/start/, (msg) => sendMainMenu(msg.chat.id));
 
 /* ================== CALLBACKS ================== */
-// Robust callback id parsing (avoids NaN -> Postgres bigint error 22P02)
-function safeParseIdFromCb(data, prefix) {
-  if (!data || typeof data !== "string") return null;
-  if (!data.startsWith(prefix)) return null;
-  const raw = data.slice(prefix.length);
-  const id = Number(raw);
-  if (!Number.isFinite(id) || id <= 0) return null;
-  return id;
-}
-
 bot.on("callback_query", async (q) => {
   const chatId = q?.message?.chat?.id;
   if (!chatId) return;
-  try {
-    await answerCbq(q);
+  await answerCbq(q);
 
-    if (!isAdmin(chatId)) return bot.sendMessage(chatId, "⛔ Accès refusé.");
+  if (!isAdmin(chatId)) return bot.sendMessage(chatId, "⛔ Accès refusé.");
 
   /* ----- GLOBAL NAV ----- */
   if (q.data === "back_main") return sendMainMenu(chatId);
@@ -2403,7 +2396,7 @@ const segs = await compileSegments();
     return bot.sendMessage(chatId, "✅ Mis à jour.", kb([[{ text: "⬅️ Retour", callback_data: `emp_open_${id}` }]]));
   }
 
-  if (q.data?.startsWith("emp_del_")) {
+  if (q.data && /^(emp_del_\d+)$/.test(q.data)) {
     const id = Number(q.data.replace("emp_del_", ""));
     return bot.sendMessage(chatId, "⚠️ Confirmer suppression employé ?", {
       ...kb([
@@ -2460,7 +2453,7 @@ const segs = await compileSegments();
     });
   }
 
-  if (q.data?.startsWith("cl_del_")) {
+  if (q.data && /^(cl_del_\d+)$/.test(q.data)) {
     const id = Number(q.data.replace("cl_del_", ""));
     return bot.sendMessage(chatId, "⚠️ Confirmer suppression client ?", {
       ...kb([
@@ -2470,10 +2463,7 @@ const segs = await compileSegments();
     });
   }
   if (q.data?.startsWith("cl_del_yes_")) {
-    const id = safeParseIdFromCb(q.data, "cl_del_yes_");
-    if (!id) {
-      return bot.sendMessage(chatId, "⚠️ Suppression impossible: ID client invalide.", kb([[{ text: "⬅️ Retour", callback_data: "cl_list" }]]));
-    }
+    const id = Number(q.data.replace("cl_del_yes_", ""));
     await dbDeleteClient(id);
     return bot.sendMessage(chatId, "✅ Client supprimé.", kb([[{ text: "⬅️ Retour", callback_data: "cl_list" }]]));
   }
@@ -2553,11 +2543,8 @@ const segs = await compileSegments();
     return bot.sendMessage(chatId, "✅ Mis à jour.", kb([[{ text: "⬅️ Retour", callback_data: `pet_open_${petId}` }]]));
   }
 
-  if (q.data?.startsWith("pet_del_")) {
-    const petId = safeParseIdFromCb(q.data, "pet_del_");
-    if (!petId) {
-      return bot.sendMessage(chatId, "⚠️ Impossible: ID animal invalide.", kb([[{ text: "⬅️ Retour", callback_data: "cl_list" }]]));
-    }
+  if (q.data && /^(pet_del_\d+)$/.test(q.data)) {
+    const petId = Number(q.data.replace("pet_del_", ""));
     const p = await dbGetPet(petId);
     return bot.sendMessage(chatId, "⚠️ Confirmer suppression animal ?", {
       ...kb([
@@ -2568,10 +2555,7 @@ const segs = await compileSegments();
     });
   }
   if (q.data?.startsWith("pet_del_yes_")) {
-    const petId = safeParseIdFromCb(q.data, "pet_del_yes_");
-    if (!petId) {
-      return bot.sendMessage(chatId, "⚠️ Suppression impossible: ID animal invalide.");
-    }
+    const petId = Number(q.data.replace("pet_del_yes_", ""));
     const p = await dbGetPet(petId);
     await dbDeletePet(petId);
     return bot.sendMessage(chatId, "✅ Animal supprimé.", kb([[{ text: "⬅️ Retour", callback_data: `pet_list_${p.client_id}` }]]));
@@ -2632,7 +2616,7 @@ const segs = await compileSegments();
     return bot.sendMessage(chatId, "✅ Mis à jour.", kb([[{ text: "⬅️ Retour", callback_data: `pre_open_${id}` }]]));
   }
 
-  if (q.data?.startsWith("pre_del_")) {
+  if (q.data && /^(pre_del_\d+)$/.test(q.data)) {
     const id = Number(q.data.replace("pre_del_", ""));
     return bot.sendMessage(chatId, "⚠️ Confirmer suppression prestation ?", {
       ...kb([
@@ -2655,12 +2639,6 @@ const segs = await compileSegments();
       parse_mode: "Markdown",
       ...kb([[{ text: "⬅️ Retour", callback_data: `pre_open_${id}` }]]),
     });
-  }
-  } catch (err) {
-    console.error("Callback error:", err);
-    try {
-      await bot.sendMessage(chatId, "❌ Une erreur est survenue. Réessaie, ou fais /start.");
-    } catch (_) {}
   }
 });
 

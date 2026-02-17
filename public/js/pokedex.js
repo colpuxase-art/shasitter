@@ -305,7 +305,7 @@
         topClients
           .map((x) => `
             <div class="d-flex justify-content-between py-1 border-bottom" style="border-color: rgba(255,255,255,.08)!important;">
-              <div>${x.client}</div>
+              <div>${x.client ?? x.name ?? ('Client #' + x.id)}</div>
               <div class="fw-bold">${money(x.total)} CHF</div>
             </div>
           `)
@@ -317,7 +317,7 @@
         topPrestations
           .map((x) => `
             <div class="d-flex justify-content-between py-1 border-bottom" style="border-color: rgba(255,255,255,.08)!important;">
-              <div>${x.prestation}</div>
+              <div>${x.prestation ?? x.name ?? ('Prestation #' + x.id)}</div>
               <div class="fw-bold">${money(x.total)} CHF</div>
             </div>
           `)
