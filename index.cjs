@@ -220,15 +220,18 @@ function dayPlanIsComplete(plan) {
 }
 async function getDuoForFamily(packFamily, animalType) {
   if (!packFamily) return null;
-  const { data, error } = await sb
+  let q = sb
     .from("prestations")
     .select("*")
     .eq("active", true)
     .eq("category", "pack")
     .eq("visits_per_day", 2)
-    .eq("pack_family", packFamily)
-    .order("id", { ascending: true })
-    .limit(1);
+    .eq("pack_family", packFamily);
+
+  // Si on connaît l'animal (chat/lapin), on prend le Duo correspondant
+  if (animalType) q = q.eq("animal_type", animalType);
+
+  const { data, error } = await q.order("id", { ascending: true }).limit(1);
   if (error) throw error;
   const duo = (data || [])[0] || null;
   return duo;
@@ -1172,7 +1175,7 @@ if (step === "recap") {
 
       // Auto-duo uniquement pour les PACKS avec même pack_family
       if (pM.category === "pack" && pS.category === "pack" && pM.pack_family && pM.pack_family === pS.pack_family) {
-        const duo = await getDuoForFamily(pM.pack_family, null);
+        const duo = await getDuoForFamily(pM.pack_family, pM.animal_type);
         if (duo?.id) {
           segmentsDaily.push({ slot: "matin_soir", start_date: date, end_date: date, prestation_id: duo.id, _autoDuo: true });
           continue;
@@ -1219,7 +1222,7 @@ const segs = await compileSegments();
     const pS = await dbGetPrestation(seg.soir_id);
 
     if (pM.category === "pack" && pS.category === "pack" && pM.pack_family && pM.pack_family === pS.pack_family) {
-      const duo = await getDuoForFamily(pM.pack_family, null);
+      const duo = await getDuoForFamily(pM.pack_family, pM.animal_type);
       if (duo?.id) {
         seg.prestation_id = duo.id;
       }
@@ -1921,7 +1924,7 @@ if (q.data === "bk_confirm") {
 
       // Auto-duo uniquement pour les PACKS avec même pack_family
       if (pM.category === "pack" && pS.category === "pack" && pM.pack_family && pM.pack_family === pS.pack_family) {
-        const duo = await getDuoForFamily(pM.pack_family, null);
+      const duo = await getDuoForFamily(pM.pack_family, pM.animal_type);
         if (duo?.id) {
           segmentsDaily.push({ slot: "matin_soir", start_date: date, end_date: date, prestation_id: duo.id, _autoDuo: true });
           continue;
