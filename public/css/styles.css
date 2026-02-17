@@ -11336,4 +11336,34 @@ body{padding-bottom:72px;}
   --hx-danger:#ff3b3b;
 }
 
-.
+
+
+/* ===== ShaSitter V6 UI polish ===== */
+.shana-card{
+  border:1px solid rgba(245,185,66,.25);
+  background:linear-gradient(135deg, rgba(170,120,255,.22), rgba(255,255,255,.04));
+}
+.shana-card .muted{ color: rgba(255,255,255,.80); }
+
+.booking-card{
+  border:1px solid rgba(255,255,255,.10);
+  background:rgba(255,255,255,.05);
+  border-radius:16px;
+  padding:12px;
+  margin-bottom:10px;
+}
+.booking-card .bc-top{ display:flex; justify-content:space-between; gap:10px; align-items:flex-start; }
+.booking-card .bc-title{ font-weight:900; }
+.booking-card .bc-sub{ color: rgba(255,255,255,.72); font-size:13px; margin-top:2px; }
+.booking-card .bc-tags{ display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
+.booking-card .bc-actions{ display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end; }
+.booking-card .bc-price{
+  background:rgba(255,59,59,.95);
+  color:white;
+  padding:4px 10px;
+  border-radius:999px;
+  font-weight:900;
+  font-size:13px;
+  white-space:nowrap;
+}
+canvas#comptaPie{ width:100% !important; }
