@@ -170,6 +170,36 @@ function money2(n) {
   if (!Number.isFinite(x)) return 0;
   return Math.round(x * 100) / 100;
 }
+
+// ---------- SAFETY HELPERS (anti-NaN + anti-double-click) ----------
+function parseIdFromCallback(data, prefix) {
+  if (!data || !data.startsWith(prefix)) return null;
+  const raw = data.slice(prefix.length);
+  const id = Number(raw);
+  if (!Number.isFinite(id) || id <= 0) return null;
+  return id;
+}
+const _actionLocks = new Map(); // key -> timestamp
+function lockOnce(key, ttlMs = 3000) {
+  const now = Date.now();
+  const prev = _actionLocks.get(key) || 0;
+  if (now - prev < ttlMs) return false;
+  _actionLocks.set(key, now);
+  return true;
+}
+async function editOrSend(chatId, messageId, text, extra) {
+  try {
+    return await bot.editMessageText(text, { chat_id: chatId, message_id: messageId, ...extra });
+  } catch {
+    return bot.sendMessage(chatId, text, extra);
+  }
+}
+async function clearInlineKeyboard(chatId, messageId) {
+  try {
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: messageId });
+  } catch {}
+}
+
 function utcTodayISO() {
   const today = new Date();
   const y = today.getUTCFullYear();
@@ -220,18 +250,19 @@ function dayPlanIsComplete(plan) {
 }
 async function getDuoForFamily(packFamily, animalType) {
   if (!packFamily) return null;
-  const { data, error } = await sb
+  let q = sb
     .from("prestations")
     .select("*")
     .eq("active", true)
     .eq("category", "pack")
     .eq("visits_per_day", 2)
-    .eq("pack_family", packFamily)
-    .order("id", { ascending: true })
-    .limit(1);
+    .eq("pack_family", packFamily);
+
+  if (animalType) q = q.eq("animal_type", animalType);
+
+  const { data, error } = await q.order("id", { ascending: true }).limit(1);
   if (error) throw error;
-  const duo = (data || [])[0] || null;
-  return duo;
+  return (data || [])[0] || null;
 }
 
 const ANIMALS = ["chat", "lapin", "autre"];
@@ -1230,6 +1261,7 @@ const segs = await compileSegments();
 
     let total = 0;
     const lines = [];
+    const packSingles = new Map();
 
     for (const seg of segs) {
   // Mode avancé: si seg.slot=matin_soir mais prestation_id vide => on essaie auto-duo (packs mêmes familles) sinon on split
@@ -1287,6 +1319,24 @@ const segs = await compileSegments();
 
       const presta = await dbGetPrestation(seg.prestation_id);
       const days = daysInclusive(seg.start_date, seg.end_date);
+      if (days < 1) continue;
+
+      // ✅ Packs: optimisation DUO "illimitée" sur la période (par client+animal+pack_family)
+      if (presta.category === "pack" && Number(presta.visits_per_day || 1) === 1 && presta.pack_family) {
+        const key = `${presta.animal_type || ""}:${presta.pack_family}`;
+        const cur = packSingles.get(key) || {
+          pack_family: presta.pack_family,
+          animal_type: presta.animal_type || null,
+          name: presta.name,
+          single_price: Number(presta.price_chf || 0),
+          visits: 0,
+        };
+        cur.visits += days; // 1 visite/jour pour un pack simple
+        packSingles.set(key, cur);
+
+        lines.push(`• ${seg.start_date}→${seg.end_date} — *${slotLabel(seg.slot)}* — ${presta.name} — *(optimisé DUO)*`);
+        continue;
+      }
 
       let t = 0;
       if (presta.category === "pack") t = money2(Number(presta.price_chf) * days);
@@ -1297,6 +1347,36 @@ const segs = await compileSegments();
 
       const multTxt = presta.category === "service" ? ` (x${visitsMultiplierFromSlot(seg.slot)}/jour)` : "";
       lines.push(`• ${seg.start_date}→${seg.end_date} — *${slotLabel(seg.slot)}* — ${presta.name}${multTxt} — *${t} CHF*`);
+    }
+
+
+    // Applique l'optimisation DUO illimitée (2 visites = tarif Duo, même sur des jours différents)
+    for (const info of packSingles.values()) {
+      const visits = Number(info.visits || 0);
+      if (!Number.isFinite(visits) || visits <= 0) continue;
+
+      const duo = await getDuoForFamily(info.pack_family, info.animal_type);
+      const singlePrice = Number(info.single_price || 0);
+      const duoPrice = Number(duo?.price_chf || 0);
+
+      if (!duo || !Number.isFinite(duoPrice) || duoPrice <= 0 || !Number.isFinite(singlePrice) || singlePrice <= 0) {
+        // pas de duo défini => on facture au simple
+        const t = money2(visits * singlePrice);
+        total += t;
+        lines.push(`• 📦 ${info.name} — ${visits} visite(s) — *${t} CHF*`);
+        continue;
+      }
+
+      const duos = Math.floor(visits / 2);
+      const reste = visits % 2;
+      const optimized = money2(duos * duoPrice + reste * singlePrice);
+      const normal = money2(visits * singlePrice);
+      const saved = money2(normal - optimized);
+
+      total += optimized;
+
+      const savedTxt = saved > 0 ? ` (économie ${saved} CHF)` : "";
+      lines.push(`• 📦 ${info.pack_family} — ${visits} visite(s) → ${duos} Duo + ${reste} Simple = *${optimized} CHF*${savedTxt}`);
     }
 
     const optT = addonsTotal();
@@ -1978,12 +2058,26 @@ if (q.data === "bk_confirm") {
 const segs = await compileSegments();
 
     const created = [];
+    const packBuckets = new Map();
 
-    // 1) segments (pack/service)
-    for (const seg of segs) {
+   for (const seg of segs) {
       const presta = await dbGetPrestation(seg.prestation_id);
       const days = daysInclusive(seg.start_date, seg.end_date);
       if (days < 1) continue;
+
+      // ✅ Packs: optimisation DUO illimitée sur la période
+      if (presta.category === "pack" && Number(presta.visits_per_day || 1) === 1 && presta.pack_family) {
+        const key = `${presta.animal_type || ""}:${presta.pack_family}`;
+        const arr = packBuckets.get(key) || [];
+        arr.push({
+          seg,
+          presta,
+          days,
+          baseTotal: money2(Number(presta.price_chf || 0) * days),
+        });
+        packBuckets.set(key, arr);
+        continue;
+      }
 
       const total = await computeLineTotal(presta, days, seg.slot);
 
@@ -2011,6 +2105,63 @@ const segs = await compileSegments();
 
       created.push(await dbInsertBooking(payload));
     }
+
+    // 🔁 Insère les packs simples avec total "optimisé DUO" réparti sur les segments (pour que la compta soit correcte)
+    for (const [key, items] of packBuckets.entries()) {
+      const first = items[0];
+      const fam = first?.presta?.pack_family;
+      const animalType = first?.presta?.animal_type || null;
+      const singlePrice = Number(first?.presta?.price_chf || 0);
+
+      const visits = items.reduce((a, it) => a + Number(it.days || 0), 0);
+      const normal = money2(visits * singlePrice);
+
+      const duo = await getDuoForFamily(fam, animalType);
+      const duoPrice = Number(duo?.price_chf || 0);
+
+      let optimized = normal;
+      if (duo && Number.isFinite(duoPrice) && duoPrice > 0 && Number.isFinite(singlePrice) && singlePrice > 0) {
+        const duos = Math.floor(visits / 2);
+        const reste = visits % 2;
+        optimized = money2(duos * duoPrice + reste * singlePrice);
+      }
+
+      const ratio = normal > 0 ? optimized / normal : 1;
+
+      // répartit les centimes sur les segments (dernier segment = ajustement)
+      let assigned = 0;
+      for (let i = 0; i < items.length; i++) {
+        const it = items[i];
+        const isLast = i === items.length - 1;
+        const adj = isLast ? money2(optimized - assigned) : money2(it.baseTotal * ratio);
+        assigned = money2(assigned + adj);
+
+        const empPercent = d.employee_id ? Number(d.employee_percent || 0) : 0;
+        const empPart = d.employee_id ? money2((adj * empPercent) / 100) : 0;
+        const coPart = d.employee_id ? money2(adj - empPart) : adj;
+
+        const payload = {
+          group_id,
+          client_id: d.client_id,
+          pet_id: d.pet_id || null,
+          prestation_id: it.seg.prestation_id,
+          slot: it.seg.slot,
+          start_date: it.seg.start_date,
+          end_date: it.seg.end_date,
+          days_count: it.days,
+          total_chf: adj,
+          employee_id: d.employee_id || null,
+          employee_percent: d.employee_id ? empPercent : 0,
+          employee_part_chf: empPart,
+          company_part_chf: coPart,
+          notes: d.notes || "",
+          status: "confirmed",
+        };
+
+        created.push(await dbInsertBooking(payload));
+      }
+    }
+
 
     // 2) options uniques (suppléments + ménage)
     const addons = d.addons || [];
@@ -2137,18 +2288,29 @@ const segs = await compileSegments();
   }
 
   if (q.data?.startsWith("emp_del_")) {
-    const id = Number(q.data.replace("emp_del_", ""));
-    return bot.sendMessage(chatId, "⚠️ Confirmer suppression employé ?", {
+    const id = parseIdFromCallback(q.data, "emp_del_");
+    if (!id) return bot.sendMessage(chatId, "❌ ID employé invalide.", kb([[{ text: "⬅️ Retour", callback_data: "emp_list" }]]));
+    const lockKey = `${chatId}:emp_del:${id}`;
+    if (!lockOnce(lockKey, 1500)) return;
+
+    await clearInlineKeyboard(chatId, q.message.message_id);
+    return editOrSend(chatId, q.message.message_id, "⚠️ Confirmer suppression employé ?", {
       ...kb([
         [{ text: "🗑️ Oui supprimer", callback_data: `emp_del_yes_${id}` }],
         [{ text: "⬅️ Retour", callback_data: `emp_open_${id}` }],
       ]),
     });
   }
+
   if (q.data?.startsWith("emp_del_yes_")) {
-    const id = Number(q.data.replace("emp_del_yes_", ""));
+    const id = parseIdFromCallback(q.data, "emp_del_yes_");
+    if (!id) return bot.sendMessage(chatId, "❌ ID employé invalide.", kb([[{ text: "⬅️ Retour", callback_data: "emp_list" }]]));
+    const lockKey = `${chatId}:emp_del_yes:${id}`;
+    if (!lockOnce(lockKey, 3000)) return;
+
+    await clearInlineKeyboard(chatId, q.message.message_id);
     await dbDeleteEmployee(id);
-    return bot.sendMessage(chatId, "✅ Employé supprimé.", kb([[{ text: "⬅️ Retour", callback_data: "emp_list" }]]));
+    return editOrSend(chatId, q.message.message_id, "✅ Employé supprimé.", kb([[{ text: "⬅️ Retour", callback_data: "emp_list" }]]));
   }
 
   if (q.data?.startsWith("emp_edit_")) {
@@ -2194,18 +2356,30 @@ const segs = await compileSegments();
   }
 
   if (q.data?.startsWith("cl_del_")) {
-    const id = Number(q.data.replace("cl_del_", ""));
-    return bot.sendMessage(chatId, "⚠️ Confirmer suppression client ?", {
+    const id = parseIdFromCallback(q.data, "cl_del_");
+    if (!id) return bot.sendMessage(chatId, "❌ ID client invalide.", kb([[{ text: "⬅️ Retour", callback_data: "cl_list" }]]));
+    const lockKey = `${chatId}:cl_del:${id}`;
+    if (!lockOnce(lockKey, 1500)) return;
+
+    // évite les messages en double: on édite le message courant
+    await clearInlineKeyboard(chatId, q.message.message_id);
+    return editOrSend(chatId, q.message.message_id, "⚠️ Confirmer suppression client ?", {
       ...kb([
         [{ text: "🗑️ Oui supprimer", callback_data: `cl_del_yes_${id}` }],
         [{ text: "⬅️ Retour", callback_data: `cl_open_${id}` }],
       ]),
     });
   }
+
   if (q.data?.startsWith("cl_del_yes_")) {
-    const id = Number(q.data.replace("cl_del_yes_", ""));
+    const id = parseIdFromCallback(q.data, "cl_del_yes_");
+    if (!id) return bot.sendMessage(chatId, "❌ ID client invalide.", kb([[{ text: "⬅️ Retour", callback_data: "cl_list" }]]));
+    const lockKey = `${chatId}:cl_del_yes:${id}`;
+    if (!lockOnce(lockKey, 3000)) return;
+
+    await clearInlineKeyboard(chatId, q.message.message_id);
     await dbDeleteClient(id);
-    return bot.sendMessage(chatId, "✅ Client supprimé.", kb([[{ text: "⬅️ Retour", callback_data: "cl_list" }]]));
+    return editOrSend(chatId, q.message.message_id, "✅ Client supprimé.", kb([[{ text: "⬅️ Retour", callback_data: "cl_list" }]]));
   }
 
   if (q.data?.startsWith("cl_edit_")) {
@@ -2284,9 +2458,14 @@ const segs = await compileSegments();
   }
 
   if (q.data?.startsWith("pet_del_")) {
-    const petId = Number(q.data.replace("pet_del_", ""));
+    const petId = parseIdFromCallback(q.data, "pet_del_");
+    if (!petId) return bot.sendMessage(chatId, "❌ ID animal invalide.", kb([[{ text: "⬅️ Retour", callback_data: "cl_list" }]]));
+    const lockKey = `${chatId}:pet_del:${petId}`;
+    if (!lockOnce(lockKey, 1500)) return;
+
     const p = await dbGetPet(petId);
-    return bot.sendMessage(chatId, "⚠️ Confirmer suppression animal ?", {
+    await clearInlineKeyboard(chatId, q.message.message_id);
+    return editOrSend(chatId, q.message.message_id, "⚠️ Confirmer suppression animal ?", {
       ...kb([
         [{ text: "🗑️ Oui supprimer", callback_data: `pet_del_yes_${petId}` }],
         [{ text: "⬅️ Retour", callback_data: `pet_open_${petId}` }],
@@ -2294,11 +2473,17 @@ const segs = await compileSegments();
       ]),
     });
   }
+
   if (q.data?.startsWith("pet_del_yes_")) {
-    const petId = Number(q.data.replace("pet_del_yes_", ""));
+    const petId = parseIdFromCallback(q.data, "pet_del_yes_");
+    if (!petId) return bot.sendMessage(chatId, "❌ ID animal invalide.", kb([[{ text: "⬅️ Retour", callback_data: "cl_list" }]]));
+    const lockKey = `${chatId}:pet_del_yes:${petId}`;
+    if (!lockOnce(lockKey, 3000)) return;
+
     const p = await dbGetPet(petId);
+    await clearInlineKeyboard(chatId, q.message.message_id);
     await dbDeletePet(petId);
-    return bot.sendMessage(chatId, "✅ Animal supprimé.", kb([[{ text: "⬅️ Retour", callback_data: `pet_list_${p.client_id}` }]]));
+    return editOrSend(chatId, q.message.message_id, "✅ Animal supprimé.", kb([[{ text: "⬅️ Retour", callback_data: `pet_list_${p.client_id}` }]]));
   }
 
   if (q.data?.startsWith("pet_edit_")) {
