@@ -170,6 +170,119 @@ function money2(n) {
   if (!Number.isFinite(x)) return 0;
   return Math.round(x * 100) / 100;
 }
+// ---- Packs: détection famille + optimisation Duo "illimitée" (par période sélectionnée) ----
+function packFamilyFromName(name) {
+  const n = String(name || "").toLowerCase();
+  if (n.includes("essentiel")) return "essentiel";
+  if (n.includes("tendresse")) return "tendresse";
+  if (n.includes("confort")) return "confort";
+  if (n.includes("complic")) return "complicite"; // complicité / complicite
+  if (n.includes("sur-mesure") || n.includes("sur mesure")) return "sur-mesure";
+  return null;
+}
+
+const _packPriceCache = new Map();
+
+async function getPackPricesForFamily(animalType, family) {
+  const key = `${animalType}::${family}`;
+  if (_packPriceCache.has(key)) return _packPriceCache.get(key);
+
+  const patternByFamily = {
+    "essentiel": "%essentiel%",
+    "tendresse": "%tendresse%",
+    "confort": "%confort%",
+    "complicite": "%complic%",
+    "sur-mesure": "%sur-mesure%",
+  };
+  const ilike = patternByFamily[family] || `%${family}%`;
+
+  async function queryWithPackFamily() {
+    const { data, error } = await sb
+      .from("prestations")
+      .select("id,name,price_chf,visits_per_day,animal_type,category,pack_family")
+      .eq("category", "pack")
+      .eq("animal_type", animalType)
+      .eq("pack_family", family)
+      .in("visits_per_day", [1, 2])
+      .limit(50);
+    if (error) throw error;
+    return data || [];
+  }
+
+  async function queryWithName() {
+    const { data, error } = await sb
+      .from("prestations")
+      .select("id,name,price_chf,visits_per_day,animal_type,category")
+      .eq("category", "pack")
+      .eq("animal_type", animalType)
+      .ilike("name", ilike)
+      .in("visits_per_day", [1, 2])
+      .limit(50);
+    if (error) throw error;
+    return data || [];
+  }
+
+  let rows = [];
+  try {
+    rows = await queryWithPackFamily();
+  } catch (e) {
+    rows = await queryWithName();
+  }
+
+  const simple = rows.find((r) => Number(r.visits_per_day) === 1) || null;
+  const duo = rows.find((r) => Number(r.visits_per_day) === 2) || null;
+
+  const res = {
+    simplePrice: Number(simple?.price_chf || 0),
+    duoPrice: Number(duo?.price_chf || 0),
+  };
+  _packPriceCache.set(key, res);
+  return res;
+}
+
+async function optimizePackTotalsForSegments(segInfos) {
+  const byGroup = new Map();
+  for (let i = 0; i < segInfos.length; i++) {
+    const info = segInfos[i];
+    if (!info) continue;
+    if (info.presta?.category !== "pack") continue;
+    if (!info.family) continue;
+    const gk = `${info.animalType}::${info.family}`;
+    if (!byGroup.has(gk)) byGroup.set(gk, []);
+    byGroup.get(gk).push({ idx: i, ...info });
+  }
+
+  const out = new Array(segInfos.length).fill(null);
+
+  for (const [gk, items] of byGroup.entries()) {
+    const [animalType, family] = gk.split("::");
+    const totalUnits = items.reduce((a, it) => a + Number(it.units || 0), 0);
+    if (totalUnits <= 0) continue;
+
+    const { simplePrice, duoPrice } = await getPackPricesForFamily(animalType, family);
+
+    const duos = Math.floor(totalUnits / 2);
+    const rest = totalUnits % 2;
+
+    const totalCost = money2(duos * Number(duoPrice || 0) + rest * Number(simplePrice || 0));
+
+    const perUnit = totalUnits ? (Number(totalCost) / totalUnits) : 0;
+    let acc = 0;
+    for (let j = 0; j < items.length; j++) {
+      const it = items[j];
+      const isLast = j === items.length - 1;
+      const t = isLast ? money2(Number(totalCost) - acc) : money2(perUnit * Number(it.units || 0));
+      acc = money2(acc + t);
+      out[it.idx] = t;
+    }
+  }
+
+  for (let i = 0; i < segInfos.length; i++) {
+    if (out[i] == null) out[i] = segInfos[i]?.baseTotal ?? 0;
+  }
+  return out;
+}
+
 function utcTodayISO() {
   const today = new Date();
   const y = today.getUTCFullYear();
@@ -768,7 +881,7 @@ function computeLineTotalGlobal(presta, days, slot) {
 async function applyDuoDiscountAcrossPeriod(segs, petAnimalType) {
   if (!Array.isArray(segs) || !segs.length) return { segs, duoSummary: [] };
 
-  // précharge prestations
+  // Précharge prestations + calcule baseTotal
   const prestaCache = new Map();
   async function getPresta(id) {
     const k = String(id);
@@ -778,63 +891,66 @@ async function applyDuoDiscountAcrossPeriod(segs, petAnimalType) {
     return p;
   }
 
-  // enrich segments
-  for (const s of segs) {
-    if (!s.prestation_id) continue;
+  const segInfos = [];
+  for (let i = 0; i < segs.length; i++) {
+    const s = segs[i];
+    if (!s?.prestation_id) {
+      segInfos.push(null);
+      continue;
+    }
     const p = await getPresta(s.prestation_id);
     const days = daysInclusive(s.start_date, s.end_date);
+
+    const baseTotal = computeLineTotalGlobal(p, days, s.slot);
+
     s._presta = p;
     s._days = days;
-    s._baseTotal = computeLineTotalGlobal(p, days, s.slot);
-    s._adjTotal = s._baseTotal;
+    s._baseTotal = baseTotal;
+    s._adjTotal = baseTotal;
+
+    const family = p.pack_family || packFamilyFromName(p.name);
+    const units = (p.category === "pack") ? (days * Number(p.visits_per_day || 1)) : 0;
+
+    segInfos.push({ seg: s, presta: p, days, baseTotal, units, family, animalType: p.animal_type || (petAnimalType || "autre") });
   }
 
-  // agrège visites solo par famille
-  const fam = new Map(); // family -> {visits, singlePrice, duoPrice, duoName}
-  for (const s of segs) {
-    const p = s._presta;
-    if (!p) continue;
-    if (p.category !== "pack") continue;
-    if (Number(p.visits_per_day || 1) !== 1) continue;
-    if (!p.pack_family) continue;
+  // Calcule les totaux optimisés (2 unités => pack Duo) puis applique aux segments
+  const adjTotals = await optimizePackTotalsForSegments(segInfos.map((x) => x || { baseTotal: 0 }));
+  for (let i = 0; i < segs.length; i++) {
+    const t = adjTotals[i];
+    if (typeof t === "number" && Number.isFinite(t) && t >= 0) segs[i]._adjTotal = money2(t);
+  }
 
-    const key = String(p.pack_family);
-    const cur = fam.get(key) || { visits: 0, singlePrice: Number(p.price_chf || 0), duoPrice: null, duoName: null };
-    cur.visits += Number(s._days || 0);
-    // si prix solo diff, on garde le plus grand (sécurité)
-    cur.singlePrice = Math.max(cur.singlePrice, Number(p.price_chf || 0));
-    fam.set(key, cur);
+  // Résumé (pour info) : par famille, combien de paires + économie
+  const byFam = new Map(); // key => {units, base, adj, pairs}
+  for (const info of segInfos) {
+    if (!info) continue;
+    const p = info.presta;
+    if (p.category !== "pack") continue;
+    if (!info.family) continue;
+
+    const key = `${info.animalType}::${info.family}`;
+    const cur = byFam.get(key) || { units: 0, base: 0, adj: 0 };
+    cur.units += Number(info.units || 0);
+    cur.base += Number(info.baseTotal || 0);
+    cur.adj += Number(info.seg?._adjTotal || info.baseTotal || 0);
+    byFam.set(key, cur);
   }
 
   const duoSummary = [];
-  for (const [family, info] of fam.entries()) {
-    const pairs = Math.floor(info.visits / 2);
-    if (pairs < 1) continue;
-
-    const duo = await getDuoForFamily(family, petAnimalType || null);
-    if (!duo) continue;
-
-    info.duoPrice = Number(duo.price_chf || 0);
-    info.duoName = duo.name || `Pack Duo (${family})`;
-
-    const discountPerPair = Math.max(0, (2 * info.singlePrice) - info.duoPrice);
-    const discountTotal = money2(discountPerPair * pairs);
-    if (discountTotal <= 0) continue;
-
-    // répartit le discount sur les segments de cette famille (chronologique)
-    let remaining = discountTotal;
-    const targets = segs
-      .filter((s) => s._presta?.category === "pack" && Number(s._presta?.visits_per_day || 1) === 1 && String(s._presta?.pack_family || "") === family)
-      .sort((a, b) => (a.start_date || "").localeCompare(b.start_date || ""));
-
-    for (const s of targets) {
-      if (remaining <= 0) break;
-      const canTake = Math.min(remaining, s._adjTotal); // ne pas passer en négatif
-      s._adjTotal = money2(s._adjTotal - canTake);
-      remaining = money2(remaining - canTake);
+  for (const [key, v] of byFam.entries()) {
+    const [animalType, family] = key.split("::");
+    const pairs = Math.floor(Number(v.units || 0) / 2);
+    const discountTotal = money2(Number(v.base || 0) - Number(v.adj || 0));
+    if (pairs >= 1 && discountTotal > 0) {
+      // essaye de récupérer le nom du duo, sinon fallback
+      let duoName = `Pack Duo (${family})`;
+      try {
+        const duo = await getDuoForFamily(family, animalType || petAnimalType || null);
+        if (duo?.name) duoName = duo.name;
+      } catch (e) {}
+      duoSummary.push({ family, pairs, discountTotal, duoName });
     }
-
-    duoSummary.push({ family, pairs, discountTotal, duoName: info.duoName });
   }
 
   return { segs, duoSummary };
@@ -1297,6 +1413,60 @@ if (step === "recap") {
 }
 
 const segs = await compileSegments();
+
+// Duo illimité: ajuste les totaux des packs sur la période (2 visites => Duo, même si pas le même jour)
+try {
+  const segInfos = [];
+  for (const seg of segs) {
+    const presta = await dbGetPrestation(seg.prestation_id);
+    const days = daysInclusive(seg.start_date, seg.end_date);
+    if (days < 1) continue;
+
+    let baseTotal = 0;
+    if (presta.category === "pack") baseTotal = money2(Number(presta.price_chf || 0) * days);
+    else if (presta.category === "service") baseTotal = money2(Number(presta.price_chf || 0) * days * visitsMultiplierFromSlot(seg.slot));
+    else baseTotal = money2(Number(presta.price_chf || 0));
+
+    const family = presta.pack_family || packFamilyFromName(presta.name);
+    const units = presta.category === "pack" ? (days * Number(presta.visits_per_day || 1)) : 0;
+
+    segInfos.push({ seg, presta, days, baseTotal, units, family, animalType: presta.animal_type || "autre" });
+  }
+  const adj = await optimizePackTotalsForSegments(segInfos);
+  for (let i = 0; i < segs.length; i++) {
+    if (typeof adj[i] === "number") segs[i]._adjTotal = adj[i];
+  }
+} catch (e) {
+  // silencieux: si config DB sans duo / sans colonne, on retombe sur les totaux standards
+}
+
+
+// Duo illimité: ajuste les totaux des packs sur la période (2 visites => Duo, même si pas le même jour)
+try {
+  const segInfos = [];
+  for (const seg of segs) {
+    const presta = await dbGetPrestation(seg.prestation_id);
+    const days = daysInclusive(seg.start_date, seg.end_date);
+    if (days < 1) continue;
+
+    let baseTotal = 0;
+    if (presta.category === "pack") baseTotal = money2(Number(presta.price_chf || 0) * days);
+    else if (presta.category === "service") baseTotal = money2(Number(presta.price_chf || 0) * days * visitsMultiplierFromSlot(seg.slot));
+    else baseTotal = money2(Number(presta.price_chf || 0));
+
+    const family = presta.pack_family || packFamilyFromName(presta.name);
+    const units = presta.category === "pack" ? (days * Number(presta.visits_per_day || 1)) : 0;
+
+    segInfos.push({ seg, presta, days, baseTotal, units, family, animalType: presta.animal_type || "autre" });
+  }
+  const adj = await optimizePackTotalsForSegments(segInfos);
+  for (let i = 0; i < segs.length; i++) {
+    if (typeof adj[i] === "number") segs[i]._adjTotal = adj[i];
+  }
+} catch (e) {
+  // silencieux: si config DB sans duo / sans colonne, on retombe sur les totaux standards
+}
+
 
     const petRow = d.pet_id ? await dbGetPet(d.pet_id) : null;
     const duoRes = await applyDuoDiscountAcrossPeriod(segs, petRow?.animal_type || null);
