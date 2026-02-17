@@ -1,11 +1,19 @@
-/* index.cjs — ShaSitter (PRIVATE Telegram mini-app) — V5.1 CLEAN (V4 compat + V5 groups/segments + reminders menu + recap grouping) */
+/* index.cjs — ShaSitter (PRIVATE Telegram mini-app) — V5 CLEAN (V4 compat + V5 groups/segments) */
 
 const express = require("express");
 const TelegramBot = require("node-telegram-bot-api");
 const path = require("path");
 const crypto = require("crypto");
 const { createClient } = require("@supabase/supabase-js");
-const cron = require("node-cron");
+
+// ✅ node-cron OPTIONNEL (ne doit plus crasher Render si absent)
+let cron = null;
+try {
+  cron = require("node-cron");
+} catch (e) {
+  console.warn("⚠️ node-cron n'est pas installé → fallback setInterval (OK sur Render).");
+}
+
 const { createEvents } = require("ics");
 const PDFDocument = require("pdfkit");
 
@@ -23,13 +31,8 @@ const SUPABASE_SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE;
 const WEBAPP_URL = process.env.WEBAPP_URL;
 
 const SHANA_CHAT_ID = process.env.SHANA_CHAT_ID; // Telegram chat id de Shana (rappels internes)
-
-// defaults (peuvent être modifiés via menu bot runtime)
-const REMINDERS_ENABLED_DEFAULT = (process.env.REMINDERS_ENABLED || "true").toLowerCase() === "true";
-const REMINDER_HOURS_LIST_DEFAULT = String(process.env.REMINDER_HOURS_LIST || "24,3")
-  .split(",")
-  .map((x) => Number(String(x).trim()))
-  .filter((n) => Number.isFinite(n) && n > 0);
+const REMINDERS_ENABLED = (process.env.REMINDERS_ENABLED || "true").toLowerCase() === "true";
+const REMINDER_HOURS_BEFORE = Number(process.env.REMINDER_HOURS_BEFORE || 3);
 
 if (!BOT_TOKEN) {
   console.error("❌ BOT_TOKEN manquant");
@@ -48,7 +51,7 @@ const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE, {
 });
 
 /* ================== ADMIN ================== */
-const ADMIN_IDS = new Set([6675436692, 8275234190]); // <-- tes IDs Telegram
+const ADMIN_IDS = new Set([6675436692, 8275234190]); // <-- ton ID Telegram
 const isAdmin = (chatId) => ADMIN_IDS.has(chatId);
 
 /* ================== TELEGRAM BOT (409 FIX — STABLE) ================== */
@@ -134,18 +137,6 @@ function addDaysISO(isoDate, deltaDays) {
   const dd = String(d.getUTCDate()).padStart(2, "0");
   return `${y}-${m}-${dd}`;
 }
-function parseHHMM(hhmm) {
-  const s = String(hhmm || "").trim();
-  if (!s || !s.includes(":")) return null;
-  const [H, M] = s.split(":");
-  const h = parseInt(H, 10);
-  const m = parseInt(M, 10);
-  if (!Number.isFinite(h) || !Number.isFinite(m)) return null;
-  return { h, m };
-}
-function dateAtUTC(dateISO, hh, mm) {
-  return new Date(`${dateISO}T${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}:00Z`);
-}
 
 /* ================== ADVANCED DAY PLANNER (V5 logique) ================== */
 function buildDateList(startISO, endISO) {
@@ -160,6 +151,7 @@ function getDayPlan(d, dateISO) {
   return d.day_plans[dateISO];
 }
 function ensureDayPlan(st, dateISO) {
+  // alias safe (évite bug "ensureDayPlan is not defined")
   return getDayPlan(st.data, dateISO);
 }
 function dayPlanIsComplete(plan) {
@@ -344,6 +336,7 @@ async function v5UpsertGroup({ group_id, client_id, start_date, end_date, notes,
     status: status || "confirmed",
   };
 
+  // upsert
   const { error } = await sb.from("booking_groups").upsert(payload, { onConflict: "id" });
   if (error) throw error;
 }
@@ -404,10 +397,12 @@ async function v5InsertSegments({ group_id, client_id, pet_id, employee_id, note
     }
 
     // matin_soir
+    // On veut 2 visites: matin + soir
     const prestaM = await dbGetPrestation(plan.matin_id);
     const prestaS = await dbGetPrestation(plan.soir_id);
 
-    // auto-duo (même family)
+    // Si duo pack (visits_per_day=2) choisi à la place des deux (ton auto-duo)
+    // Ici: si les deux sont des packs de même family -> on cherche le pack duo et on l’utilise pour les 2 visites
     if (prestaM.category === "pack" && prestaS.category === "pack" && prestaM.pack_family && prestaM.pack_family === prestaS.pack_family) {
       const { data, error } = await sb
         .from("prestations")
@@ -467,11 +462,13 @@ async function v5InsertSegments({ group_id, client_id, pet_id, employee_id, note
 
   if (!rows.length) return;
 
+  // insert en bulk
   const { error } = await sb.from("booking_segments").insert(rows);
   if (error) throw error;
 }
 
 async function v5RecalcGroupTotals(group_id) {
+  // recalcul via segments
   const { data, error } = await sb
     .from("booking_segments")
     .select("price_chf,duration_min")
@@ -552,39 +549,6 @@ app.get("/api/bookings/:id", requireAdminWebApp, async (req, res) => {
 });
 
 /* ================== MENUS ================== */
-
-// runtime reminder settings (Shana only)
-const REMINDER_STATE = {
-  enabled: REMINDERS_ENABLED_DEFAULT,
-  hours_list: REMINDER_HOURS_LIST_DEFAULT.length ? REMINDER_HOURS_LIST_DEFAULT : [24, 3],
-};
-
-function reminderMenuText() {
-  const en = REMINDER_STATE.enabled ? "✅ Activés" : "⛔ Désactivés";
-  const hrs = REMINDER_STATE.hours_list.join(", ");
-  return `⏰ *Rappels (Shana only)*\n\nStatut: *${en}*\nHeures avant: *${hrs}*\n\n⚙️ Choisis:`;
-}
-function sendReminderMenu(chatId) {
-  return bot.sendMessage(chatId, reminderMenuText(), {
-    parse_mode: "Markdown",
-    ...kb([
-      [
-        { text: REMINDER_STATE.enabled ? "⛔ Désactiver" : "✅ Activer", callback_data: "rem_toggle" },
-        { text: "⬅️ Menu", callback_data: "back_main" },
-      ],
-      [{ text: "🕒 Preset 24h + 3h", callback_data: "rem_preset_24_3" }],
-      [{ text: "🕒 Preset 24h + 6h + 3h", callback_data: "rem_preset_24_6_3" }],
-      [{ text: "🕒 Preset 3h + 1h", callback_data: "rem_preset_3_1" }],
-      [{ text: "➕ Ajouter 1h", callback_data: "rem_add_1" }],
-      [{ text: "➕ Ajouter 2h", callback_data: "rem_add_2" }],
-      [{ text: "➕ Ajouter 3h", callback_data: "rem_add_3" }],
-      [{ text: "➕ Ajouter 6h", callback_data: "rem_add_6" }],
-      [{ text: "➕ Ajouter 24h", callback_data: "rem_add_24" }],
-      [{ text: "🧹 Reset (env)", callback_data: "rem_reset_env" }],
-    ]),
-  });
-}
-
 function sendMainMenu(chatId) {
   if (!isAdmin(chatId)) return bot.sendMessage(chatId, "⛔ App privée ShaSitter. Accès refusé.");
   return bot.sendMessage(chatId, "🐱 *ShaSitter — Menu Admin*\nChoisis une catégorie 👇", {
@@ -604,7 +568,6 @@ function sendMainMenu(chatId) {
         { text: "🧾 Passées", callback_data: "list_past" },
       ],
       [{ text: "💰 Comptabilité", callback_data: "show_compta" }],
-      [{ text: "⏰ Rappels (Shana)", callback_data: "m_reminders" }],
     ]),
   });
 }
@@ -725,37 +688,6 @@ function addonsText(d) {
 }
 function devisTotal(d) {
   return money2(Number(d.devis_amount || 0));
-}
-
-/* ===== recap grouping: matins ensemble / soirs ensemble ===== */
-function buildSlotGroupsFromDayPlans(d) {
-  const dates = d.dates || [];
-  const plans = d.day_plans || {};
-
-  // We count "blocks": a contiguous run of matin bookings counts as 1 block, same for soir.
-  // This matches your example: 16 jours alternés -> 8 matins + 8 soirs.
-  const blocks = { matin: 0, soir: 0 };
-  let prevHadMatin = false;
-  let prevHadSoir = false;
-
-  let visits = { matin: 0, soir: 0 };
-
-  for (const date of dates) {
-    const plan = plans[date];
-    const hadMatin = !!(plan && (plan.slot === "matin" || plan.slot === "matin_soir") && plan.matin_id);
-    const hadSoir  = !!(plan && (plan.slot === "soir"  || plan.slot === "matin_soir") && plan.soir_id);
-
-    if (hadMatin) visits.matin += 1;
-    if (hadSoir) visits.soir += 1;
-
-    if (hadMatin && !prevHadMatin) blocks.matin += 1;
-    if (hadSoir && !prevHadSoir) blocks.soir += 1;
-
-    prevHadMatin = hadMatin;
-    prevHadSoir = hadSoir;
-  }
-
-  return { blocks, visits };
 }
 
 /* ================== BOOKING STEP RENDER ================== */
@@ -964,28 +896,27 @@ async function renderBookingStep(chatId) {
       let total = 0;
       const lines = [];
 
-      const slotSummary = buildSlotGroupsFromDayPlans(d);
-      const blocksMatin = slotSummary.blocks.matin;
-      const blocksSoir = slotSummary.blocks.soir;
-      const visitsMatin = slotSummary.visits.matin;
-      const visitsSoir = slotSummary.visits.soir;
-
+      // calcul preview via day_plans (même logique que V5 segments)
       for (const date of dates) {
         const plan = plans[date];
         if (!plan?.slot || plan.slot === "none") continue;
 
-        const addLine = async (prestation_id, labelSlot) => {
+        const addLine = async (slot, prestation_id, labelSlot) => {
           const presta = await dbGetPrestation(prestation_id);
           let linePrice = 0;
+
+          // packs: par jour; services: par visite; mais ici on est par visite => on considère prix par visite pour v5
           if (presta.category === "pack" && Number(presta.visits_per_day) === 2) linePrice = money2(Number(presta.price_chf || 0) / 2);
           else linePrice = money2(Number(presta.price_chf || 0));
+
           total += linePrice;
           lines.push(`• ${date} — *${labelSlot}* — ${presta.name} — *${linePrice} CHF*`);
         };
 
-        if (plan.slot === "matin") await addLine(plan.matin_id, slotLabel("matin"));
-        if (plan.slot === "soir") await addLine(plan.soir_id, slotLabel("soir"));
+        if (plan.slot === "matin") await addLine("matin", plan.matin_id, slotLabel("matin"));
+        if (plan.slot === "soir") await addLine("soir", plan.soir_id, slotLabel("soir"));
         if (plan.slot === "matin_soir") {
+          // Duo auto si possible
           const pM = await dbGetPrestation(plan.matin_id);
           const pS = await dbGetPrestation(plan.soir_id);
 
@@ -1000,14 +931,14 @@ async function renderBookingStep(chatId) {
               .limit(1);
             const duo = (data || [])[0];
             if (duo) {
-              await addLine(duo.id, "🌅 Matin (duo)");
-              await addLine(duo.id, "🌙 Soir (duo)");
+              await addLine("matin", duo.id, "🌅 Matin (duo)");
+              await addLine("soir", duo.id, "🌙 Soir (duo)");
               continue;
             }
           }
 
-          await addLine(plan.matin_id, slotLabel("matin"));
-          await addLine(plan.soir_id, slotLabel("soir"));
+          await addLine("matin", plan.matin_id, slotLabel("matin"));
+          await addLine("soir", plan.soir_id, slotLabel("soir"));
         }
       }
 
@@ -1027,20 +958,13 @@ async function renderBookingStep(chatId) {
       const empLine = d.employee_id ? `Employé: *${empPercent}%* → *${empPart} CHF*` : `Employé: *aucun*`;
       const devisLine = dvT > 0 ? `🧾 Devis: *${dvT} CHF*` : `🧾 Devis: —`;
 
-      const summaryBlocks =
-        `📌 *Résumé planning*\n` +
-        `• Matins: *${visitsMatin} visites* (groupés: *${blocksMatin}*)\n` +
-        `• Soirs: *${visitsSoir} visites* (groupés: *${blocksSoir}*)\n` +
-        `• Total visites: *${visitsMatin + visitsSoir}*\n`;
-
       return bot.sendMessage(
         chatId,
         `🧾 *Récapitulatif*\n\n` +
           `Client: *${await clientTxt()}*\n` +
           `Animal: *${await petTxt()}*\n` +
           `Période: *${d.start_date} → ${d.end_date}*\n\n` +
-          `${summaryBlocks}\n` +
-          `📌 *Détail visites*\n${lines.join("\n") || "—"}\n\n` +
+          `📌 *Visites*\n${lines.join("\n") || "—"}\n\n` +
           `🧩 Options: *${optT} CHF*\n` +
           `${devisLine}\n\n` +
           `Total: *${total} CHF*\n` +
@@ -1076,26 +1000,6 @@ bot.on("callback_query", async (q) => {
   if (q.data === "m_emps") return sendEmployeesMenu(chatId);
   if (q.data === "m_clients") return sendClientsMenu(chatId);
   if (q.data === "m_prestas") return sendPrestationsMenu(chatId);
-
-  // reminders menu
-  if (q.data === "m_reminders") return sendReminderMenu(chatId);
-  if (q.data === "rem_toggle") {
-    REMINDER_STATE.enabled = !REMINDER_STATE.enabled;
-    return sendReminderMenu(chatId);
-  }
-  if (q.data === "rem_reset_env") {
-    REMINDER_STATE.enabled = REMINDERS_ENABLED_DEFAULT;
-    REMINDER_STATE.hours_list = REMINDER_HOURS_LIST_DEFAULT.length ? REMINDER_HOURS_LIST_DEFAULT : [24, 3];
-    return sendReminderMenu(chatId);
-  }
-  if (q.data === "rem_preset_24_3") { REMINDER_STATE.hours_list = [24, 3]; return sendReminderMenu(chatId); }
-  if (q.data === "rem_preset_24_6_3") { REMINDER_STATE.hours_list = [24, 6, 3]; return sendReminderMenu(chatId); }
-  if (q.data === "rem_preset_3_1") { REMINDER_STATE.hours_list = [3, 1]; return sendReminderMenu(chatId); }
-  if (q.data === "rem_add_1") { if (!REMINDER_STATE.hours_list.includes(1)) REMINDER_STATE.hours_list.push(1); REMINDER_STATE.hours_list.sort((a,b)=>b-a); return sendReminderMenu(chatId); }
-  if (q.data === "rem_add_2") { if (!REMINDER_STATE.hours_list.includes(2)) REMINDER_STATE.hours_list.push(2); REMINDER_STATE.hours_list.sort((a,b)=>b-a); return sendReminderMenu(chatId); }
-  if (q.data === "rem_add_3") { if (!REMINDER_STATE.hours_list.includes(3)) REMINDER_STATE.hours_list.push(3); REMINDER_STATE.hours_list.sort((a,b)=>b-a); return sendReminderMenu(chatId); }
-  if (q.data === "rem_add_6") { if (!REMINDER_STATE.hours_list.includes(6)) REMINDER_STATE.hours_list.push(6); REMINDER_STATE.hours_list.sort((a,b)=>b-a); return sendReminderMenu(chatId); }
-  if (q.data === "rem_add_24") { if (!REMINDER_STATE.hours_list.includes(24)) REMINDER_STATE.hours_list.push(24); REMINDER_STATE.hours_list.sort((a,b)=>b-a); return sendReminderMenu(chatId); }
 
   if (q.data === "m_book") {
     wBooking.set(chatId, { step: "pick_client", data: {}, history: [] });
@@ -1209,6 +1113,7 @@ bot.on("callback_query", async (q) => {
       if (ctx.storeKey === "__day_soir") plan.soir_id = id;
       st.data.day_plans[date] = plan;
 
+      // auto advance if complete
       if (dayPlanIsComplete(plan)) {
         if (idx < dates.length - 1) {
           st.data.day_index = idx + 1;
@@ -1217,6 +1122,7 @@ bot.on("callback_query", async (q) => {
           st.step = "addons";
         }
       } else {
+        // if matin_soir and just picked matin -> go pick soir
         if (plan.slot === "matin_soir" && !plan.soir_id) st.step = "day_pick_soir";
         else st.step = "day_slot";
       }
@@ -1452,9 +1358,14 @@ bot.on("callback_query", async (q) => {
     const d = st.data || {};
 
     try {
+      // group_id unique
       const group_id = crypto.randomUUID();
 
+      // 1) V4 legacy inserts (compat) -> on met juste une ligne "résumé" pour conserver l’historique
+      //    (on garde ton ancien principe: 1 ligne par segment / addon / devis)
+      //    MAIS la V5 vérité sera booking_segments.
       const createdLegacy = [];
+
       const dates = d.dates || [];
       const plans = d.day_plans || {};
       const allPrestas = await dbListPrestations(true);
@@ -1562,8 +1473,6 @@ bot.on("callback_query", async (q) => {
       return bot.sendMessage(chatId, `❌ Ajout KO: ${e.message}`, kb([[{ text: "⬅️ Menu", callback_data: "back_main" }]]));
     }
   }
-
-  // (le reste de tes menus employés/clients/prestas/pets reste inchangé chez toi)
 });
 
 /* ================== TEXT INPUT HANDLER ================== */
@@ -1696,14 +1605,14 @@ app.get("/api/agenda", async (req, res) => {
 
     if (date) q = q.eq("date", date);
     else if (range === "today") q = q.eq("date", fmt(today));
-    else if (range === "tomorrow") { const t = new Date(today); t.setUTCDate(t.getUTCDate() + 1); q = q.eq("date", fmt(t)); }
-    else if (range === "week") { const end = new Date(today); end.setUTCDate(end.getUTCDate() + 7); q = q.gte("date", fmt(today)).lt("date", fmt(end)); }
+    else if (range === "tomorrow") { const t = new Date(today); t.setDate(t.getDate() + 1); q = q.eq("date", fmt(t)); }
+    else if (range === "week") { const end = new Date(today); end.setDate(end.getDate() + 7); q = q.gte("date", fmt(today)).lt("date", fmt(end)); }
     else if (range === "past") q = q.lt("date", fmt(today));
     else if (range === "upcoming") q = q.gte("date", fmt(today));
 
     q = q.order("date", { ascending: true })
-      .order("slot", { ascending: true })
-      .order("start_time", { ascending: true, nullsFirst: false });
+         .order("slot", { ascending: true })
+         .order("start_time", { ascending: true, nullsFirst: false });
 
     const { data, error } = await q;
     if (error) return res.status(500).json({ error });
@@ -1732,14 +1641,17 @@ app.get("/api/export/:groupId", async (req, res) => {
 
     const events = segments.map((seg) => {
       const d = new Date(seg.date);
-      const y = d.getUTCFullYear();
-      const m = d.getUTCMonth() + 1;
-      const da = d.getUTCDate();
+      const y = d.getFullYear();
+      const m = d.getMonth() + 1;
+      const da = d.getDate();
 
       let hh = seg.slot === "soir" ? 18 : 9;
       let mm = 0;
-      const parsed = parseHHMM(seg.start_time);
-      if (parsed) { hh = parsed.h; mm = parsed.m; }
+      if (seg.start_time) {
+        const [H, M] = String(seg.start_time).split(":");
+        hh = parseInt(H || "0", 10);
+        mm = parseInt(M || "0", 10);
+      }
 
       const durMin = Number(seg.duration_min || 30);
 
@@ -1828,87 +1740,66 @@ app.get("/api/documents/:type/:groupId", async (req, res) => {
 });
 
 /* ================== V5 — Rappels internes (Shana only) ================== */
-
 const _sentReminders = new Map();
 function _cleanupSent() {
   const now = Date.now();
   for (const [k, ts] of _sentReminders.entries()) {
-    if (now - ts > 36 * 60 * 60 * 1000) _sentReminders.delete(k);
+    if (now - ts > 24 * 60 * 60 * 1000) _sentReminders.delete(k);
   }
 }
 
-// Calcule l'heure cible d'un segment (UTC) à partir de date + start_time (si existe) sinon fallback matin/soir
-function segmentStartDateUTC(seg) {
-  const dateISO = seg.date;
-  const parsed = parseHHMM(seg.start_time);
-  if (parsed) return dateAtUTC(dateISO, parsed.h, parsed.m);
-  // fallback
-  const hh = seg.slot === "soir" ? 18 : 9;
-  return dateAtUTC(dateISO, hh, 0);
+// ✅ scheduler compatible cron OU fallback interval
+function scheduleEvery5Minutes(fn) {
+  if (cron && typeof cron.schedule === "function") {
+    cron.schedule("*/5 * * * *", fn);
+    return;
+  }
+  // fallback: toutes les 5 minutes
+  setTimeout(() => fn().catch?.(() => {}), 5000); // 1er run rapide
+  setInterval(() => fn().catch?.(() => {}), 5 * 60 * 1000);
 }
 
 function startV5ReminderCron() {
+  if (!REMINDERS_ENABLED) return;
   if (!SHANA_CHAT_ID) {
     console.warn("⚠️ SHANA_CHAT_ID manquant: rappels désactivés");
     return;
   }
 
-  cron.schedule("*/5 * * * *", async () => {
+  scheduleEvery5Minutes(async () => {
     try {
-      if (!REMINDER_STATE.enabled) return;
       _cleanupSent();
 
       const now = new Date();
-      const nowMs = now.getTime();
-
-      // on prend une fenêtre large: jusqu’à maxHours + 1 jour
-      const hoursMax = Math.max(...(REMINDER_STATE.hours_list.length ? REMINDER_STATE.hours_list : [24, 3]));
-      const lookAheadMs = (hoursMax + 2) * 60 * 60 * 1000; // +2h marge
-
-      const todayISO = utcTodayISO();
-      const endISO = addDaysISO(todayISO, 2); // simple: aujourd’hui + 2 jours (suffisant pour 24h/48h presets)
+      const target = new Date(now.getTime() + REMINDER_HOURS_BEFORE * 60 * 60 * 1000);
+      const dateStr = target.toISOString().slice(0, 10);
 
       const { data, error } = await sb
         .from("v_agenda_segments")
         .select("*")
-        .gte("date", todayISO)
-        .lte("date", endISO)
-        .eq("status", "confirmed") // ✅ FIX (avant: pending)
-        .order("date", { ascending: true })
+        .eq("date", dateStr)
+        .eq("status", "pending")
         .order("slot", { ascending: true })
         .order("start_time", { ascending: true, nullsFirst: false });
 
       if (error) return;
 
-      for (const seg of (data || [])) {
-        const startAt = segmentStartDateUTC(seg);
-        const diffMs = startAt.getTime() - nowMs;
-        if (diffMs < -5 * 60 * 1000) continue; // déjà passé depuis plus de 5 min
+      (data || []).forEach((seg) => {
+        const key = `${seg.segment_id}:${REMINDER_HOURS_BEFORE}`;
+        if (_sentReminders.has(key)) return;
 
-        for (const h of REMINDER_STATE.hours_list) {
-          const targetMs = h * 60 * 60 * 1000;
-          const windowMs = 6 * 60 * 1000; // +/- 6 min (cron toutes les 5 min)
-          const delta = Math.abs(diffMs - targetMs);
+        const msg =
+          `🔔 Rappel visite (${REMINDER_HOURS_BEFORE}h avant)\n\n` +
+          `Client: ${seg.client_name}\n` +
+          (seg.pet_name ? `Animal: ${seg.pet_name}\n` : "") +
+          `Adresse: ${seg.address_final || seg.client_address || ""}\n` +
+          `Créneau: ${seg.slot}\n` +
+          `Prestation: ${seg.prestation_name}\n` +
+          (seg.notes ? `Notes: ${seg.notes}\n` : "");
 
-          if (delta <= windowMs && diffMs <= lookAheadMs) {
-            const key = `${seg.segment_id}:${h}`;
-            if (_sentReminders.has(key)) continue;
-
-            const msg =
-              `🔔 Rappel visite (*${h}h avant*)\n\n` +
-              `Client: ${seg.client_name}\n` +
-              (seg.pet_name ? `Animal: ${seg.pet_name}\n` : "") +
-              `Adresse: ${seg.address_final || seg.client_address || ""}\n` +
-              `Date: ${seg.date}\n` +
-              `Créneau: ${seg.slot}\n` +
-              `Prestation: ${seg.prestation_name}\n` +
-              (seg.notes ? `Notes: ${seg.notes}\n` : "");
-
-            bot.sendMessage(SHANA_CHAT_ID, msg, { parse_mode: "Markdown" }).catch(() => {});
-            _sentReminders.set(key, Date.now());
-          }
-        }
-      }
+        bot.sendMessage(SHANA_CHAT_ID, msg).catch(() => {});
+        _sentReminders.set(key, Date.now());
+      });
     } catch {}
   });
 }

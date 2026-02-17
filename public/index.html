@@ -125,99 +125,10 @@
         z-index: 9999;
       }
 
-      main{ padding-bottom: 108px; }
+      main{ padding-bottom: 92px; }
       .muted{ color: rgba(255,255,255,.70); }
       .kpi{ font-weight: 900; font-size: 1.25rem; }
       .list-group-item{ background: rgba(0,0,0,.35); border-color: rgba(255,255,255,.10); }
-
-      /* ===== V5 UI additions ===== */
-      .sticky-tools{
-        position: sticky;
-        top: 10px;
-        z-index: 50;
-        backdrop-filter: blur(10px);
-      }
-
-      .seg-grid{
-        display: grid;
-        grid-template-columns: 1fr;
-        gap: 10px;
-      }
-
-      .seg-card{
-        border: 1px solid rgba(255,255,255,.10);
-        background: rgba(255,255,255,.04);
-        border-radius: 16px;
-        padding: 12px;
-      }
-
-      .seg-top{
-        display:flex;
-        justify-content: space-between;
-        gap: 10px;
-        flex-wrap: wrap;
-        align-items: baseline;
-      }
-
-      .tag{
-        display:inline-flex;
-        align-items:center;
-        gap:6px;
-        padding: 4px 10px;
-        border-radius: 999px;
-        border: 1px solid rgba(255,255,255,.12);
-        background: rgba(0,0,0,.35);
-        font-size: .78rem;
-        color: rgba(255,255,255,.85);
-      }
-      .tag.matin{ border-color: rgba(255,193,7,.22); }
-      .tag.soir{ border-color: rgba(0,180,255,.22); }
-      .tag.duo{ border-color: rgba(220,53,69,.22); }
-
-      .seg-meta{
-        margin-top: 8px;
-        color: rgba(255,255,255,.75);
-        font-size: .92rem;
-        line-height: 1.25rem;
-      }
-
-      .seg-actions{
-        display:flex;
-        gap: 8px;
-        flex-wrap: wrap;
-        margin-top: 10px;
-      }
-
-      .divider-soft{
-        border-top: 1px solid rgba(255,255,255,.10);
-        margin: 14px 0;
-      }
-
-      .pager{
-        display:flex;
-        gap: 8px;
-        justify-content: space-between;
-        align-items:center;
-        flex-wrap: wrap;
-        margin-top: 10px;
-      }
-
-      .empty-state{
-        padding: 14px;
-        border: 1px dashed rgba(255,255,255,.18);
-        border-radius: 16px;
-        color: rgba(255,255,255,.75);
-        background: rgba(0,0,0,.25);
-      }
-
-      .two-col{
-        display:grid;
-        grid-template-columns: 1fr;
-        gap: 12px;
-      }
-      @media (min-width: 992px){
-        .two-col{ grid-template-columns: 1fr 1fr; }
-      }
     </style>
   </head>
 
@@ -250,7 +161,7 @@
             <div>
               <h1 class="h3 mb-1 text-white">Dashboard ShaSitter</h1>
               <p class="mb-0 text-secondary">
-                Gestion privée (admin) — agenda V5, prestations, clients, réservations, compta.
+                Gestion privée (admin) — prestations, clients, réservations, compta.
               </p>
             </div>
           </div>
@@ -260,7 +171,6 @@
 
     <main class="py-4">
       <div class="container">
-
         <!-- ===================== HOME ===================== -->
         <section id="panelHome" class="panel active">
           <div class="row g-4">
@@ -285,18 +195,6 @@
                   </div>
 
                   <div class="mini mb-3">
-                    <div class="fw-bold mb-2">📅 Aujourd’hui</div>
-                    <div class="d-flex justify-content-between gap-2 flex-wrap">
-                      <div class="muted">Matin: <span id="kpiTodayMorning">—</span></div>
-                      <div class="muted">Soir: <span id="kpiTodayEvening">—</span></div>
-                      <div class="muted">Total: <span id="kpiTodayTotal">—</span></div>
-                    </div>
-                    <div class="mt-2">
-                      <button id="goAgendaToday" class="btn btn-sm btn-outline-warning w-100" type="button">Ouvrir Agenda (aujourd’hui)</button>
-                    </div>
-                  </div>
-
-                  <div class="mini mb-3">
                     <div class="fw-bold mb-2">⏰ À venir (résumé)</div>
                     <div class="muted">Réservations: <span id="kpiUpcomingCount">—</span></div>
                     <div class="muted">Prochaine: <span id="kpiNextBooking">—</span></div>
@@ -308,7 +206,7 @@
                   </div>
 
                   <div class="mt-3 text-secondary small">
-                    ℹ️ Ajout / modification se fait via Telegram (menu /start). Le dashboard = lecture + actions V5 (export, PDF).
+                    ℹ️ Tout ajout / modification se fait via Telegram (menu /start).
                   </div>
                 </div>
               </div>
@@ -317,106 +215,13 @@
             <div class="col-lg-7">
               <div class="card card-soft text-white">
                 <div class="card-body">
-                  <div class="d-flex align-items-center justify-content-between gap-2 flex-wrap">
-                    <h2 class="h4 mb-0">📅 Agenda rapide</h2>
-                    <div class="control-pill">
-                      <div class="d-flex gap-2 flex-wrap">
-                        <button id="quickToday" class="btn btn-sm pill-btn active" type="button">Aujourd’hui</button>
-                        <button id="quickTomorrow" class="btn btn-sm pill-btn" type="button">Demain</button>
-                        <button id="quickWeek" class="btn btn-sm pill-btn" type="button">7 jours</button>
-                      </div>
-                    </div>
-                  </div>
+                  <h2 class="h4 mb-2">📅 Réservations à venir</h2>
+                  <div id="upcomingList" class="list-group list-group-flush"></div>
 
-                  <div class="divider-soft"></div>
+                  <hr class="border-secondary my-4" />
 
-                  <div class="two-col">
-                    <div class="mini">
-                      <div class="d-flex justify-content-between align-items-center">
-                        <div class="fw-bold">🌅 Matin</div>
-                        <span class="tag matin"># <span id="quickCountMorning">—</span></span>
-                      </div>
-                      <div id="quickAgendaMorning" class="mt-2 seg-grid"></div>
-                    </div>
-
-                    <div class="mini">
-                      <div class="d-flex justify-content-between align-items-center">
-                        <div class="fw-bold">🌙 Soir</div>
-                        <span class="tag soir"># <span id="quickCountEvening">—</span></span>
-                      </div>
-                      <div id="quickAgendaEvening" class="mt-2 seg-grid"></div>
-                    </div>
-                  </div>
-
-                  <div class="mt-3">
-                    <button id="goAgenda" class="btn btn-outline-light w-100" type="button">Ouvrir l’onglet Agenda</button>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-          </div>
-        </section>
-
-        <!-- ===================== AGENDA (V5) ===================== -->
-        <section id="panelAgenda" class="panel">
-          <div class="card card-soft text-white">
-            <div class="card-body">
-              <div class="d-flex align-items-center justify-content-between gap-2 flex-wrap">
-                <h2 class="h4 mb-0">🗓️ Agenda (V5)</h2>
-
-                <div class="control-pill sticky-tools">
-                  <div class="d-flex gap-2 align-items-center flex-wrap">
-                    <button id="agToday" class="btn btn-sm pill-btn active" type="button">Aujourd’hui</button>
-                    <button id="agTomorrow" class="btn btn-sm pill-btn" type="button">Demain</button>
-                    <button id="agWeek" class="btn btn-sm pill-btn" type="button">7 jours</button>
-                    <input id="agDate" type="date" class="form-control form-control-sm bg-dark text-white border-secondary" style="width:auto;" />
-                    <button id="agReload" class="btn btn-sm btn-outline-light" type="button">↻</button>
-                  </div>
-
-                  <div class="mt-2 d-flex gap-2 align-items-center flex-wrap">
-                    <input id="agSearch" class="form-control form-control-sm bg-dark text-white border-secondary" type="search" placeholder="Rechercher client / animal / prestation…" autocomplete="off" />
-                    <button id="agClear" class="btn btn-sm btn-outline-light" type="button">✕</button>
-                  </div>
-                </div>
-              </div>
-
-              <div class="divider-soft"></div>
-
-              <div class="two-col">
-                <div class="mini">
-                  <div class="d-flex justify-content-between align-items-center">
-                    <div class="fw-bold">🌅 Matin</div>
-                    <span class="tag matin"># <span id="agCountMorning">—</span></span>
-                  </div>
-                  <div id="agendaMorning" class="mt-2 seg-grid"></div>
-                  <div id="agendaMorningEmpty" class="mt-2 empty-state" style="display:none;">Aucune prestation le matin.</div>
-                </div>
-
-                <div class="mini">
-                  <div class="d-flex justify-content-between align-items-center">
-                    <div class="fw-bold">🌙 Soir</div>
-                    <span class="tag soir"># <span id="agCountEvening">—</span></span>
-                  </div>
-                  <div id="agendaEvening" class="mt-2 seg-grid"></div>
-                  <div id="agendaEveningEmpty" class="mt-2 empty-state" style="display:none;">Aucune prestation le soir.</div>
-                </div>
-              </div>
-
-              <div class="divider-soft"></div>
-
-              <div class="mini">
-                <div class="fw-bold mb-2">📌 Group actions</div>
-                <div class="muted small mb-2">
-                  Sélectionne une prestation (dans Matin/Soir) pour activer les boutons.
-                </div>
-                <div class="d-flex gap-2 flex-wrap">
-                  <button id="agBtnIcs" class="btn btn-outline-warning" type="button" disabled>📆 Export Google Agenda (ICS)</button>
-                  <button id="agBtnDevis" class="btn btn-outline-light" type="button" disabled>📄 PDF Devis</button>
-                  <button id="agBtnFacture" class="btn btn-outline-light" type="button" disabled>🧾 PDF Facture</button>
-                </div>
-                <div class="muted small mt-2">
-                  Group sélectionné: <span id="agSelectedGroup">—</span>
+                  <h2 class="h4 mb-2">🧾 Dernières réservations passées</h2>
+                  <div id="pastList" class="list-group list-group-flush"></div>
                 </div>
               </div>
             </div>
@@ -448,7 +253,7 @@
               <div class="d-flex align-items-center justify-content-between gap-2 flex-wrap">
                 <h2 class="h4 mb-0">🐾 Prestations</h2>
                 <div class="control-pill">
-                  <div class="d-flex gap-2 align-items-center flex-wrap">
+                  <div class="d-flex gap-2 align-items-center">
                     <select id="prestaAnimalFilter" class="form-select bg-dark text-white border-secondary" style="width:auto;">
                       <option value="all">Tous</option>
                       <option value="chat">Chats</option>
@@ -465,61 +270,30 @@
           </div>
         </section>
 
-        <!-- ===================== BOOKINGS ===================== -->
+        <!-- ===================== BOOKINGS / AGENDA (V5) ===================== -->
         <section id="panelBookings" class="panel">
-          <div class="row g-4">
-            <div class="col-lg-6">
-              <div class="card card-soft text-white">
-                <div class="card-body">
-                  <div class="d-flex justify-content-between align-items-center gap-2 flex-wrap">
-                    <h2 class="h4 mb-0">⏰ À venir</h2>
-                    <div class="control-pill">
-                      <div class="d-flex gap-2 align-items-center">
-                        <input id="bkUpSearch" class="form-control bg-dark text-white border-secondary" type="search" placeholder="Rechercher…" autocomplete="off" />
-                        <button id="bkUpClear" class="btn btn-outline-light" type="button">✕</button>
-                      </div>
-                    </div>
-                  </div>
+          <div class="card card-soft text-white">
+            <div class="card-body">
+              <div class="d-flex align-items-center justify-content-between gap-2 flex-wrap">
+                <h2 class="h4 mb-0">📅 Agenda (visites)</h2>
 
-                  <div class="divider-soft"></div>
-
-                  <div id="bookingsUpcoming" class="list-group list-group-flush"></div>
-
-                  <div class="pager">
-                    <button id="bkUpPrev" class="btn btn-sm btn-outline-light" type="button">⬅️</button>
-                    <div class="muted small">Page <span id="bkUpPage">1</span> / <span id="bkUpPages">1</span></div>
-                    <button id="bkUpNext" class="btn btn-sm btn-outline-light" type="button">➡️</button>
+                <div class="control-pill">
+                  <div class="d-flex gap-2 flex-wrap">
+                    <button type="button" class="btn btn-sm pill-btn agenda-filter active" data-range="today">Aujourd’hui</button>
+                    <button type="button" class="btn btn-sm pill-btn agenda-filter" data-range="tomorrow">Demain</button>
+                    <button type="button" class="btn btn-sm pill-btn agenda-filter" data-range="week">7 jours</button>
+                    <button type="button" class="btn btn-sm pill-btn agenda-filter" data-range="upcoming">À venir</button>
+                    <button type="button" class="btn btn-sm pill-btn agenda-filter" data-range="past">Passé</button>
                   </div>
                 </div>
               </div>
-            </div>
 
-            <div class="col-lg-6">
-              <div class="card card-soft text-white">
-                <div class="card-body">
-                  <div class="d-flex justify-content-between align-items-center gap-2 flex-wrap">
-                    <h2 class="h4 mb-0">🧾 Passées</h2>
-                    <div class="control-pill">
-                      <div class="d-flex gap-2 align-items-center">
-                        <input id="bkPastSearch" class="form-control bg-dark text-white border-secondary" type="search" placeholder="Rechercher…" autocomplete="off" />
-                        <button id="bkPastClear" class="btn btn-outline-light" type="button">✕</button>
-                      </div>
-                    </div>
-                  </div>
+              <div class="mt-3" id="agendaContainer"></div>
 
-                  <div class="divider-soft"></div>
-
-                  <div id="bookingsPast" class="list-group list-group-flush"></div>
-
-                  <div class="pager">
-                    <button id="bkPastPrev" class="btn btn-sm btn-outline-light" type="button">⬅️</button>
-                    <div class="muted small">Page <span id="bkPastPage">1</span> / <span id="bkPastPages">1</span></div>
-                    <button id="bkPastNext" class="btn btn-sm btn-outline-light" type="button">➡️</button>
-                  </div>
-                </div>
+              <div class="mt-3 text-secondary small">
+                ℹ️ Les boutons ICS / PDF utilisent les routes V5: <code>/api/export/:groupId</code> et <code>/api/documents/:type/:groupId</code>.
               </div>
             </div>
-
           </div>
         </section>
 
@@ -573,12 +347,11 @@
               </div>
 
               <div class="mt-3 text-secondary small">
-                ℹ️ Ici c’est fait pour rester lisible (pas de pavé). Si tu veux, on met des mini graphiques ensuite.
+                ℹ️ Graphiques “simples” ici = barres / listes (rapides & lisibles dans Telegram).
               </div>
             </div>
           </div>
         </section>
-
       </div>
     </main>
 
@@ -588,7 +361,7 @@
       </div>
     </footer>
 
-    <!-- ===================== MODAL EDIT BOOKING (legacy) ===================== -->
+    <!-- ===================== MODAL EDIT BOOKING ===================== -->
     <div class="modal fade" id="modalEditBooking" tabindex="-1" aria-hidden="true">
       <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content bg-dark text-white border border-danger">
@@ -636,38 +409,11 @@
       </div>
     </div>
 
-    <!-- ===================== MODAL GROUP ACTIONS (V5) ===================== -->
-    <div class="modal fade" id="modalGroupActions" tabindex="-1" aria-hidden="true">
-      <div class="modal-dialog modal-dialog-centered">
-        <div class="modal-content bg-dark text-white border border-danger">
-          <div class="modal-header">
-            <h5 class="modal-title">📌 Actions (Group)</h5>
-            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
-          </div>
-          <div class="modal-body">
-            <div class="muted small mb-2">Group ID</div>
-            <div class="fw-bold mb-3"><span id="gaGroupId">—</span></div>
-
-            <div class="d-grid gap-2">
-              <button id="gaIcs" class="btn btn-outline-warning" type="button">📆 Export Google Agenda (ICS)</button>
-              <button id="gaDevis" class="btn btn-outline-light" type="button">📄 PDF Devis</button>
-              <button id="gaFacture" class="btn btn-outline-light" type="button">🧾 PDF Facture</button>
-            </div>
-
-            <div class="muted small mt-3">
-              (Shana only) — pas d’envoi au client. Juste export / documents.
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-
     <div id="toast">—</div>
 
     <!-- bottom nav -->
     <nav id="bottomNav" class="bottom-nav">
       <button id="btnHome" class="bn-item active" type="button"><span class="bn-ico">🏠</span><span class="bn-txt">Accueil</span></button>
-      <button id="btnAgenda" class="bn-item" type="button"><span class="bn-ico">🗓️</span><span class="bn-txt">Agenda</span></button>
       <button id="btnClients" class="bn-item" type="button"><span class="bn-ico">👤</span><span class="bn-txt">Clients</span></button>
       <button id="btnPrestations" class="bn-item" type="button"><span class="bn-ico">🐾</span><span class="bn-txt">Prestations</span></button>
       <button id="btnBookings" class="bn-item" type="button"><span class="bn-ico">📅</span><span class="bn-txt">Réservations</span></button>

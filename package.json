@@ -5,9 +5,15 @@
   "scripts": {
     "start": "node index.cjs"
   },
+  "engines": {
+    "node": "22.x"
+  },
   "dependencies": {
+    "@supabase/supabase-js": "^2.45.4",
     "express": "^4.19.2",
+    "ics": "^3.7.2",
+    "node-cron": "^3.0.3",
     "node-telegram-bot-api": "^0.66.0",
-    "@supabase/supabase-js": "^2.45.4"
+    "pdfkit": "^0.15.0"
   }
 }
