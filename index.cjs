@@ -581,19 +581,6 @@ app.get("/api/compta/summary", requireAdminWebApp, async (req, res) => {
     const prestas = await dbListPrestations(false);
     const cName = new Map(clients.map((c) => [String(c.id), c.name]));
     const pName = new Map(prestas.map((p) => [String(p.id), p.name]));
-    const pFamily = new Map(prestas.map((p) => [String(p.id), p.pack_family || p.category || "autre"]));
-    const pCategory = new Map(prestas.map((p) => [String(p.id), p.category || "autre"]));
-
-    const byPackFamily = new Map();
-    const byCategory = new Map();
-    for (const b of bookings) {
-      const pkey = String(b.prestation_id);
-      const fam = String(pFamily.get(pkey) || "autre");
-      const cat = String(pCategory.get(pkey) || "autre");
-      byPackFamily.set(fam, (byPackFamily.get(fam) || 0) + Number(b.total_chf || 0));
-      byCategory.set(cat, (byCategory.get(cat) || 0) + Number(b.total_chf || 0));
-    }
-
 
     const months = [...byMonth.entries()]
       .sort((a, b) => a[0].localeCompare(b[0]))
@@ -616,12 +603,6 @@ app.get("/api/compta/summary", requireAdminWebApp, async (req, res) => {
       months,
       topClients,
       topPrestations,
-      byPackFamily: [...byPackFamily.entries()]
-        .sort((a, b) => b[1] - a[1])
-        .map(([key, total]) => ({ key, total: money2(total) })),
-      byCategory: [...byCategory.entries()]
-        .sort((a, b) => b[1] - a[1])
-        .map(([key, total]) => ({ key, total: money2(total) })),
     });
   } catch (e) {
     res.status(500).json({ error: "db_error", message: e.message });
@@ -769,6 +750,95 @@ globalThis.visitsMultiplierFromSlot = visitsMultiplierFromSlot;
 // Alias (legacy)
 globalThis.visitsMultiplierFromSlot = visitsMultiplierFromSlot;
 
+
+function computeLineTotalGlobal(presta, days, slot) {
+  const price = Number(presta?.price_chf || 0);
+  if (presta?.category === "pack") return money2(price * days); // pack = par jour
+  if (presta?.category === "service") return money2(price * days * visitsMultiplierFromSlot(slot)); // service = par visite
+  // supplement / menage / devis = unique
+  return money2(price);
+}
+
+/**
+ * Applique la règle "Duo" même si les 2 visites ne sont pas le même jour :
+ * - On compte toutes les visites des packs "1 visite/jour" par pack_family
+ * - Pour chaque paire (2 visites), on applique le tarif Duo (visits_per_day=2) au lieu de 2x tarif solo.
+ * - Techniquement: on calcule un discount, puis on le répartit sur les segments concernés (sans passer en négatif).
+ */
+async function applyDuoDiscountAcrossPeriod(segs, petAnimalType) {
+  if (!Array.isArray(segs) || !segs.length) return { segs, duoSummary: [] };
+
+  // précharge prestations
+  const prestaCache = new Map();
+  async function getPresta(id) {
+    const k = String(id);
+    if (prestaCache.has(k)) return prestaCache.get(k);
+    const p = await dbGetPrestation(id);
+    prestaCache.set(k, p);
+    return p;
+  }
+
+  // enrich segments
+  for (const s of segs) {
+    if (!s.prestation_id) continue;
+    const p = await getPresta(s.prestation_id);
+    const days = daysInclusive(s.start_date, s.end_date);
+    s._presta = p;
+    s._days = days;
+    s._baseTotal = computeLineTotalGlobal(p, days, s.slot);
+    s._adjTotal = s._baseTotal;
+  }
+
+  // agrège visites solo par famille
+  const fam = new Map(); // family -> {visits, singlePrice, duoPrice, duoName}
+  for (const s of segs) {
+    const p = s._presta;
+    if (!p) continue;
+    if (p.category !== "pack") continue;
+    if (Number(p.visits_per_day || 1) !== 1) continue;
+    if (!p.pack_family) continue;
+
+    const key = String(p.pack_family);
+    const cur = fam.get(key) || { visits: 0, singlePrice: Number(p.price_chf || 0), duoPrice: null, duoName: null };
+    cur.visits += Number(s._days || 0);
+    // si prix solo diff, on garde le plus grand (sécurité)
+    cur.singlePrice = Math.max(cur.singlePrice, Number(p.price_chf || 0));
+    fam.set(key, cur);
+  }
+
+  const duoSummary = [];
+  for (const [family, info] of fam.entries()) {
+    const pairs = Math.floor(info.visits / 2);
+    if (pairs < 1) continue;
+
+    const duo = await getDuoForFamily(family, petAnimalType || null);
+    if (!duo) continue;
+
+    info.duoPrice = Number(duo.price_chf || 0);
+    info.duoName = duo.name || `Pack Duo (${family})`;
+
+    const discountPerPair = Math.max(0, (2 * info.singlePrice) - info.duoPrice);
+    const discountTotal = money2(discountPerPair * pairs);
+    if (discountTotal <= 0) continue;
+
+    // répartit le discount sur les segments de cette famille (chronologique)
+    let remaining = discountTotal;
+    const targets = segs
+      .filter((s) => s._presta?.category === "pack" && Number(s._presta?.visits_per_day || 1) === 1 && String(s._presta?.pack_family || "") === family)
+      .sort((a, b) => (a.start_date || "").localeCompare(b.start_date || ""));
+
+    for (const s of targets) {
+      if (remaining <= 0) break;
+      const canTake = Math.min(remaining, s._adjTotal); // ne pas passer en négatif
+      s._adjTotal = money2(s._adjTotal - canTake);
+      remaining = money2(remaining - canTake);
+    }
+
+    duoSummary.push({ family, pairs, discountTotal, duoName: info.duoName });
+  }
+
+  return { segs, duoSummary };
+}
 
 function filterPrestations(prestas, { categories, animal_type, visits_per_day }) {
   const cats = Array.isArray(categories) ? categories : (categories ? [categories] : null);
@@ -1228,10 +1298,15 @@ if (step === "recap") {
 
 const segs = await compileSegments();
 
+    const petRow = d.pet_id ? await dbGetPet(d.pet_id) : null;
+    const duoRes = await applyDuoDiscountAcrossPeriod(segs, petRow?.animal_type || null);
+    const segs2 = duoRes.segs;
+    const duoSummary = duoRes.duoSummary;
+
     let total = 0;
     const lines = [];
 
-    for (const seg of segs) {
+    for (const seg of segs2) {
   // Mode avancé: si seg.slot=matin_soir mais prestation_id vide => on essaie auto-duo (packs mêmes familles) sinon on split
   if (seg.slot === "matin_soir" && !seg.prestation_id && seg.matin_id && seg.soir_id) {
     const pM = await dbGetPrestation(seg.matin_id);
@@ -1289,7 +1364,9 @@ const segs = await compileSegments();
       const days = daysInclusive(seg.start_date, seg.end_date);
 
       let t = 0;
-      if (presta.category === "pack") t = money2(Number(presta.price_chf) * days);
+      // si optimisation Duo appliquée, on prend le total ajusté
+      if (typeof seg._adjTotal === "number") t = seg._adjTotal;
+      else if (presta.category === "pack") t = money2(Number(presta.price_chf) * days);
       else if (presta.category === "service") t = money2(Number(presta.price_chf) * days * visitsMultiplierFromSlot(seg.slot));
       else t = money2(Number(presta.price_chf) || 0);
 
@@ -1323,6 +1400,7 @@ const segs = await compileSegments();
         `Animal: *${await petTxt()}*\n` +
         `Période: *${d.start_date} → ${d.end_date}*\n\n` +
         `📌 *Découpage*\n${lines.join("\n")}\n\n` +
+        `${duoSummary?.length ? ('✅ Duo appliqué: ' + duoSummary.map(x=>`${x.pairs}× ${x.duoName} (−${money2(x.discountTotal)} CHF)`).join(' • ') + '\n\n') : ''}` +
         `🧩 Options: *${optT} CHF*\n` +
         `${devisLine}\n\n` +
         `Total: *${total} CHF*\n` +
@@ -1977,15 +2055,20 @@ if (q.data === "bk_confirm") {
 
 const segs = await compileSegments();
 
+    const petRow = d.pet_id ? await dbGetPet(d.pet_id) : null;
+    const duoRes = await applyDuoDiscountAcrossPeriod(segs, petRow?.animal_type || null);
+    const segs2 = duoRes.segs;
+
     const created = [];
 
     // 1) segments (pack/service)
-    for (const seg of segs) {
+    for (const seg of segs2) {
       const presta = await dbGetPrestation(seg.prestation_id);
       const days = daysInclusive(seg.start_date, seg.end_date);
       if (days < 1) continue;
 
-      const total = await computeLineTotal(presta, days, seg.slot);
+      const baseTotal = await computeLineTotal(presta, days, seg.slot);
+      const total = (typeof seg._adjTotal === "number") ? seg._adjTotal : baseTotal;
 
       const empPercent = d.employee_id ? Number(d.employee_percent || 0) : 0;
       const empPart = d.employee_id ? money2((total * empPercent) / 100) : 0;
