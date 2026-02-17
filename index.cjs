@@ -175,10 +175,22 @@ function money2(n) {
 function parseIdFromCallback(data, prefix) {
   if (!data || !data.startsWith(prefix)) return null;
   const raw = data.slice(prefix.length);
-  const id = Number(raw);
+  // Be tolerant: callback payloads can be altered/truncated on some clients.
+  // Extract the first integer we find.
+  const m = String(raw).match(/\d+/);
+  if (!m) return null;
+  const id = Number(m[0]);
   if (!Number.isFinite(id) || id <= 0) return null;
   return id;
 }
+
+// Pending destructive actions (fallback when callback_data doesn't carry the id)
+const pendingDelete = {
+  client: new Map(),
+  pet: new Map(),
+  emp: new Map(),
+  presta: new Map(),
+};
 const _actionLocks = new Map(); // key -> timestamp
 function lockOnce(key, ttlMs = 3000) {
   const now = Date.now();
@@ -2253,7 +2265,7 @@ const segs = await compileSegments();
       { text: `👩‍💼 #${e.id} ${e.name} ${e.active ? "✅" : "⛔"}`, callback_data: `emp_open_${e.id}` },
     ]);
     rows.push([{ text: "⬅️ Retour", callback_data: "m_emps" }]);
-    return bot.sendMessage(chatId, "📋 Employés :", { ...kb(rows) });
+    return editOrSend(chatId, q.message?.message_id, "📋 Employés :", { ...kb(rows) });
   }
 
   if (q.data === "emp_add") {
@@ -2269,7 +2281,7 @@ const segs = await compileSegments();
   if (q.data?.startsWith("emp_open_")) {
     const id = Number(q.data.replace("emp_open_", ""));
     const e = await dbGetEmployee(id);
-    return bot.sendMessage(chatId, `👩‍💼 *${e.name}* (#${e.id})\nTel: ${e.phone || "—"}\n% défaut: ${e.default_percent}%\nActif: ${e.active ? "✅" : "⛔"}`, {
+    return editOrSend(chatId, q.message?.message_id, `👩‍💼 *${e.name}* (#${e.id})\nTel: ${e.phone || "—"}\n% défaut: ${e.default_percent}%\nActif: ${e.active ? "✅" : "⛔"}`, {
       parse_mode: "Markdown",
       ...kb([
         [{ text: "✏️ Modifier", callback_data: `emp_edit_${e.id}` }],
@@ -2293,6 +2305,8 @@ const segs = await compileSegments();
     const lockKey = `${chatId}:emp_del:${id}`;
     if (!lockOnce(lockKey, 1500)) return;
 
+    pendingDelete.emp.set(chatId, { id, message_id: q.message?.message_id });
+
     await clearInlineKeyboard(chatId, q.message.message_id);
     return editOrSend(chatId, q.message.message_id, "⚠️ Confirmer suppression employé ?", {
       ...kb([
@@ -2303,13 +2317,15 @@ const segs = await compileSegments();
   }
 
   if (q.data?.startsWith("emp_del_yes_")) {
-    const id = parseIdFromCallback(q.data, "emp_del_yes_");
-    if (!id) return bot.sendMessage(chatId, "❌ ID employé invalide.", kb([[{ text: "⬅️ Retour", callback_data: "emp_list" }]]));
+    let id = parseIdFromCallback(q.data, "emp_del_yes_");
+    if (!id) id = pendingDelete.emp.get(chatId)?.id || null;
+    if (!id) return editOrSend(chatId, q.message?.message_id, "❌ ID employé invalide.", kb([[{ text: "⬅️ Retour", callback_data: "emp_list" }]]));
     const lockKey = `${chatId}:emp_del_yes:${id}`;
     if (!lockOnce(lockKey, 3000)) return;
 
     await clearInlineKeyboard(chatId, q.message.message_id);
     await dbDeleteEmployee(id);
+    pendingDelete.emp.delete(chatId);
     return editOrSend(chatId, q.message.message_id, "✅ Employé supprimé.", kb([[{ text: "⬅️ Retour", callback_data: "emp_list" }]]));
   }
 
@@ -2328,7 +2344,7 @@ const segs = await compileSegments();
     const clients = await dbListClients();
     const rows = clients.slice(0, 25).map((c) => [{ text: `👤 #${c.id} ${c.name}`, callback_data: `cl_open_${c.id}` }]);
     rows.push([{ text: "⬅️ Retour", callback_data: "m_clients" }]);
-    return bot.sendMessage(chatId, "📋 Clients :", { ...kb(rows) });
+    return editOrSend(chatId, q.message?.message_id, "📋 Clients :", { ...kb(rows) });
   }
 
   if (q.data === "cl_add") {
@@ -2344,7 +2360,7 @@ const segs = await compileSegments();
   if (q.data?.startsWith("cl_open_")) {
     const id = Number(q.data.replace("cl_open_", ""));
     const c = await dbGetClient(id);
-    return bot.sendMessage(chatId, `👤 *${c.name}* (#${c.id})\nTel: ${c.phone || "—"}\nAdresse: ${c.address || "—"}`, {
+    return editOrSend(chatId, q.message?.message_id, `👤 *${c.name}* (#${c.id})\nTel: ${c.phone || "—"}\nAdresse: ${c.address || "—"}`, {
       parse_mode: "Markdown",
       ...kb([
         [{ text: "🐾 Animaux", callback_data: `pet_list_${c.id}` }],
@@ -2361,6 +2377,9 @@ const segs = await compileSegments();
     const lockKey = `${chatId}:cl_del:${id}`;
     if (!lockOnce(lockKey, 1500)) return;
 
+    // store pending action in case Telegram sends a malformed callback later
+    pendingDelete.client.set(chatId, { id, message_id: q.message?.message_id });
+
     // évite les messages en double: on édite le message courant
     await clearInlineKeyboard(chatId, q.message.message_id);
     return editOrSend(chatId, q.message.message_id, "⚠️ Confirmer suppression client ?", {
@@ -2372,13 +2391,15 @@ const segs = await compileSegments();
   }
 
   if (q.data?.startsWith("cl_del_yes_")) {
-    const id = parseIdFromCallback(q.data, "cl_del_yes_");
-    if (!id) return bot.sendMessage(chatId, "❌ ID client invalide.", kb([[{ text: "⬅️ Retour", callback_data: "cl_list" }]]));
+    let id = parseIdFromCallback(q.data, "cl_del_yes_");
+    if (!id) id = pendingDelete.client.get(chatId)?.id || null;
+    if (!id) return editOrSend(chatId, q.message?.message_id, "❌ ID client invalide.", kb([[{ text: "⬅️ Retour", callback_data: "cl_list" }]]));
     const lockKey = `${chatId}:cl_del_yes:${id}`;
     if (!lockOnce(lockKey, 3000)) return;
 
     await clearInlineKeyboard(chatId, q.message.message_id);
     await dbDeleteClient(id);
+    pendingDelete.client.delete(chatId);
     return editOrSend(chatId, q.message.message_id, "✅ Client supprimé.", kb([[{ text: "⬅️ Retour", callback_data: "cl_list" }]]));
   }
 
@@ -2406,7 +2427,7 @@ const segs = await compileSegments();
       [{ text: "⬅️ Retour", callback_data: `cl_open_${clientId}` }],
     ];
 
-    return bot.sendMessage(chatId, `🐾 Animaux de *${c.name}* :`, { parse_mode: "Markdown", ...kb(rows) });
+    return editOrSend(chatId, q.message?.message_id, `🐾 Animaux de *${c.name}* :`, { parse_mode: "Markdown", ...kb(rows) });
   }
 
   if (q.data?.startsWith("pet_add_")) {
@@ -2439,7 +2460,7 @@ const segs = await compileSegments();
   if (q.data?.startsWith("pet_open_")) {
     const petId = Number(q.data.replace("pet_open_", ""));
     const p = await dbGetPet(petId);
-    return bot.sendMessage(chatId, `🐾 *${p.name}* (#${p.id})\nType: ${animalLabel(p.animal_type)}\nActif: ${p.active ? "✅" : "⛔"}`, {
+    return editOrSend(chatId, q.message?.message_id, `🐾 *${p.name}* (#${p.id})\nType: ${animalLabel(p.animal_type)}\nActif: ${p.active ? "✅" : "⛔"}`, {
       parse_mode: "Markdown",
       ...kb([
         [{ text: "✏️ Modifier", callback_data: `pet_edit_${p.id}` }],
@@ -2463,6 +2484,8 @@ const segs = await compileSegments();
     const lockKey = `${chatId}:pet_del:${petId}`;
     if (!lockOnce(lockKey, 1500)) return;
 
+    pendingDelete.pet.set(chatId, { id: petId, message_id: q.message?.message_id });
+
     const p = await dbGetPet(petId);
     await clearInlineKeyboard(chatId, q.message.message_id);
     return editOrSend(chatId, q.message.message_id, "⚠️ Confirmer suppression animal ?", {
@@ -2475,14 +2498,16 @@ const segs = await compileSegments();
   }
 
   if (q.data?.startsWith("pet_del_yes_")) {
-    const petId = parseIdFromCallback(q.data, "pet_del_yes_");
-    if (!petId) return bot.sendMessage(chatId, "❌ ID animal invalide.", kb([[{ text: "⬅️ Retour", callback_data: "cl_list" }]]));
+    let petId = parseIdFromCallback(q.data, "pet_del_yes_");
+    if (!petId) petId = pendingDelete.pet.get(chatId)?.id || null;
+    if (!petId) return editOrSend(chatId, q.message?.message_id, "❌ ID animal invalide.", kb([[{ text: "⬅️ Retour", callback_data: "cl_list" }]]));
     const lockKey = `${chatId}:pet_del_yes:${petId}`;
     if (!lockOnce(lockKey, 3000)) return;
 
     const p = await dbGetPet(petId);
     await clearInlineKeyboard(chatId, q.message.message_id);
     await dbDeletePet(petId);
+    pendingDelete.pet.delete(chatId);
     return editOrSend(chatId, q.message.message_id, "✅ Animal supprimé.", kb([[{ text: "⬅️ Retour", callback_data: `pet_list_${p.client_id}` }]]));
   }
 
