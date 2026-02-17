@@ -1,4 +1,5 @@
 /* index.cjs — ShaSitter (PRIVATE Telegram mini-app) — CLEAN + PETS + MENUS + BACK + 409 FIX */
+// @ts-nocheck
 
 const express = require("express");
 const TelegramBot = require("node-telegram-bot-api");
@@ -170,6 +171,13 @@ function money2(n) {
   if (!Number.isFinite(x)) return 0;
   return Math.round(x * 100) / 100;
 }
+
+function toSafeId(val) {
+  const n = Number(val);
+  if (!Number.isFinite(n)) return null;
+  return n;
+}
+
 // ---- Packs: détection famille + optimisation Duo "illimitée" (par période sélectionnée) ----
 function packFamilyFromName(name) {
   const n = String(name || "").toLowerCase();
@@ -565,7 +573,9 @@ app.get("/api/clients/:id/bookings", requireAdminWebApp, async (req, res) => {
 // ✅ Suppression d’une réservation (utilisé par: clients / à venir / passées)
 app.delete("/api/bookings/:id", requireAdminWebApp, async (req, res) => {
   try {
-    await dbDeleteBooking(req.params.id);
+    const id = toSafeId(req.params.id);
+    if (!id) return res.status(400).json({ error: "invalid_id" });
+    await dbDeleteBooking(id);
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: "db_error", message: e.message });
@@ -2399,7 +2409,7 @@ const segs = await compileSegments();
     });
   }
   if (q.data?.startsWith("emp_del_yes_")) {
-    const id = Number(q.data.replace("emp_del_yes_", ""));
+    const id = toSafeId(q.data.replace("emp_del_yes_", ""));
     await dbDeleteEmployee(id);
     return bot.sendMessage(chatId, "✅ Employé supprimé.", kb([[{ text: "⬅️ Retour", callback_data: "emp_list" }]]));
   }
@@ -2456,7 +2466,7 @@ const segs = await compileSegments();
     });
   }
   if (q.data?.startsWith("cl_del_yes_")) {
-    const id = Number(q.data.replace("cl_del_yes_", ""));
+    const id = toSafeId(q.data.replace("cl_del_yes_", ""));
     await dbDeleteClient(id);
     return bot.sendMessage(chatId, "✅ Client supprimé.", kb([[{ text: "⬅️ Retour", callback_data: "cl_list" }]]));
   }
@@ -2548,7 +2558,7 @@ const segs = await compileSegments();
     });
   }
   if (q.data?.startsWith("pet_del_yes_")) {
-    const petId = Number(q.data.replace("pet_del_yes_", ""));
+    const petId = toSafeId(q.data.replace("pet_del_yes_", ""));
     const p = await dbGetPet(petId);
     await dbDeletePet(petId);
     return bot.sendMessage(chatId, "✅ Animal supprimé.", kb([[{ text: "⬅️ Retour", callback_data: `pet_list_${p.client_id}` }]]));
@@ -2619,7 +2629,7 @@ const segs = await compileSegments();
     });
   }
   if (q.data?.startsWith("pre_del_yes_")) {
-    const id = Number(q.data.replace("pre_del_yes_", ""));
+    const id = toSafeId(q.data.replace("pre_del_yes_", ""));
     await dbDeletePrestation(id);
     return bot.sendMessage(chatId, "✅ Prestation supprimée.", kb([[{ text: "⬅️ Retour", callback_data: "pre_list" }]]));
   }

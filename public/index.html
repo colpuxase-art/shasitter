@@ -1,453 +1,187 @@
 <!DOCTYPE html>
 <html lang="fr">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
-    <title>ShaSitter — Dashboard</title>
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>ShaSitter — Dashboard</title>
 
-    <link rel="icon" type="image/x-icon" href="assets/favicon.ico" />
-    <link href="css/styles.css" rel="stylesheet" />
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+<link rel="icon" type="image/x-icon" href="assets/favicon.ico"/>
+<link href="css/styles.css" rel="stylesheet"/>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
-    <style>
-      :root{
-        --pk-red: rgba(220,53,69,1);
-        --pk-amber: rgba(255,193,7,1);
-        --glass: rgba(255,255,255,.06);
-        --glass2: rgba(255,255,255,.10);
-        --line: rgba(255,255,255,.10);
-        --text2: rgba(255,255,255,.70);
-      }
+<style>
+:root{
+  --violet1:#1a1027;
+  --violet2:#2d1845;
+  --accent:#a855f7;
+  --soft:#ffffff10;
+  --border:#ffffff20;
+}
 
-      body.bg-dark{
-        background:
-          radial-gradient(900px 500px at 15% 10%, rgba(255,193,7,.12), transparent 60%),
-          radial-gradient(800px 500px at 85% 15%, rgba(220,53,69,.16), transparent 60%),
-          radial-gradient(900px 700px at 60% 80%, rgba(0,180,255,.10), transparent 55%),
-          linear-gradient(180deg, #05060b, #070915 45%, #05060b);
-        position: relative;
-        overflow-x: hidden;
-      }
-      body.bg-dark::before{
-        content:"";
-        position:fixed; inset:0;
-        background-image:
-          radial-gradient(circle at 20% 10%, rgba(255,255,255,.12) 0 1px, transparent 2px),
-          radial-gradient(circle at 70% 30%, rgba(255,255,255,.10) 0 1px, transparent 2px),
-          radial-gradient(circle at 40% 70%, rgba(255,255,255,.08) 0 1px, transparent 2px);
-        background-size: 320px 320px, 420px 420px, 520px 520px;
-        opacity:.25;
-        animation: starsDrift 14s linear infinite;
-        pointer-events:none;
-        mix-blend-mode: screen;
-      }
-      @keyframes starsDrift{
-        0%{ transform: translate3d(0,0,0); }
-        100%{ transform: translate3d(-60px, 40px, 0); }
-      }
+body{
+  background:
+    radial-gradient(800px 400px at 10% 10%, #a855f722, transparent 60%),
+    radial-gradient(800px 400px at 90% 20%, #9333ea22, transparent 60%),
+    linear-gradient(180deg,#09090f,#111018);
+  color:white;
+  font-family: system-ui;
+}
 
-      .panel { display:none; }
-      .panel.active { display:block; }
+.card-soft{
+  background:linear-gradient(145deg,var(--violet1),var(--violet2));
+  border:1px solid var(--border);
+  border-radius:18px;
+  box-shadow:0 20px 40px #00000060;
+}
 
-      .control-pill{
-        border: 1px solid rgba(255,255,255,.12);
-        background: rgba(255,255,255,.04);
-        border-radius: 14px;
-        padding: 10px;
-      }
+.panel{display:none;}
+.panel.active{display:block;}
 
-      .pill-btn{
-        border-radius: 12px;
-        border: 1px solid rgba(255,255,255,.14);
-        background: rgba(255,255,255,.04);
-        color: rgba(255,255,255,.85);
-      }
-      .pill-btn:hover{ background: rgba(255,255,255,.08); }
-      .pill-btn.active{
-        border-color: rgba(255,193,7,.35);
-        box-shadow: 0 0 0 1px rgba(255,193,7,.12), 0 0 18px rgba(255,193,7,.10);
-      }
+.shana-card{
+  background:linear-gradient(135deg,#2a1540,#1a1027);
+  border:1px solid #a855f755;
+  border-radius:20px;
+  padding:20px;
+  margin-bottom:25px;
+  box-shadow:0 0 40px #a855f730;
+}
 
-      .card-soft{
-        border-radius: 18px;
-        border: 1px solid rgba(255,255,255,.10);
-        background: rgba(0,0,0,.60);
-        box-shadow: 0 0 0 1px rgba(255,255,255,0.04), 0 16px 40px rgba(0,0,0,0.60);
-      }
+.shana-card h2{
+  font-size:1.1rem;
+  font-weight:600;
+  margin-bottom:10px;
+}
 
-      .mini{
-        border: 1px solid rgba(255,255,255,.12);
-        background: rgba(255,255,255,.04);
-        border-radius: 16px;
-        padding: 10px;
-      }
+.presta-card{
+  background:linear-gradient(145deg,#141020,#1e1530);
+  border:1px solid #ffffff10;
+  border-radius:16px;
+  padding:16px;
+  margin-bottom:12px;
+  transition:.2s;
+}
+.presta-card:hover{
+  transform:translateY(-3px);
+  box-shadow:0 10px 30px #00000080;
+}
 
-      .bottom-nav{
-        position: fixed; left: 0; right: 0; bottom: 0;
-        display: flex; justify-content: space-around; gap: 6px;
-        padding: 10px 10px;
-        background: rgba(0,0,0,.92);
-        border-top: 1px solid rgba(220,53,69,.55);
-        z-index: 9998;
-        backdrop-filter: blur(10px);
-      }
-      .bn-item{
-        flex: 1;
-        border: 1px solid rgba(255,255,255,.12);
-        background: rgba(255,255,255,.04);
-        color: rgba(255,255,255,.85);
-        border-radius: 16px;
-        padding: 10px 8px;
-        display:flex;
-        align-items:center;
-        justify-content:center;
-        gap:8px;
-      }
-      .bn-item.active{
-        border-color: rgba(255,193,7,.35);
-        box-shadow: 0 0 0 1px rgba(255,193,7,.12), 0 0 18px rgba(255,193,7,.10);
-      }
-      .bn-ico{ font-size: 1.05rem; }
-      .bn-txt{ font-weight: 700; font-size: .92rem; }
+.bottom-nav{
+  position:fixed;
+  bottom:0;
+  left:0;
+  right:0;
+  display:flex;
+  justify-content:space-around;
+  background:#0e0e15;
+  padding:12px;
+  border-top:1px solid #a855f755;
+}
 
-      #toast{
-        position: fixed;
-        left: 50%;
-        bottom: 78px;
-        transform: translateX(-50%);
-        padding: 10px 14px;
-        border-radius: 14px;
-        background: rgba(0,0,0,.75);
-        border: 1px solid rgba(255,255,255,.12);
-        color: rgba(255,255,255,.9);
-        box-shadow: 0 14px 40px rgba(0,0,0,.55);
-        display:none;
-        z-index: 9999;
-      }
+.bn-item{
+  background:#ffffff08;
+  border:1px solid #ffffff20;
+  border-radius:14px;
+  padding:8px 14px;
+  color:white;
+}
+.bn-item.active{
+  border-color:var(--accent);
+  box-shadow:0 0 15px #a855f740;
+}
 
-      main{ padding-bottom: 92px; }
-      .muted{ color: rgba(255,255,255,.70); }
-      .kpi{ font-weight: 900; font-size: 1.25rem; }
-      .list-group-item{ background: rgba(0,0,0,.35); border-color: rgba(255,255,255,.10); }
-    </style>
-  </head>
+main{padding-bottom:100px;}
 
-  <body class="bg-dark">
-    <!-- NAVBAR -->
-    <nav class="navbar navbar-expand-lg navbar-dark bg-black border-bottom border-danger">
-      <div class="container">
-        <a class="navbar-brand fw-bold text-danger" href="#">ShaSitter</a>
+canvas{
+  background:#0f0c1a;
+  border-radius:16px;
+  padding:10px;
+}
+</style>
+</head>
 
-        <div class="d-flex gap-2">
-          <button id="themeBtn" class="btn btn-sm btn-outline-warning" type="button">✨ Thème</button>
-          <button id="refreshBtn" class="btn btn-sm btn-outline-light" type="button">↻ Refresh</button>
-          <button id="closeBtn" class="btn btn-sm btn-outline-danger" type="button">Fermer</button>
-        </div>
-      </div>
-    </nav>
+<body>
 
-    <!-- HEADER -->
-    <header class="py-4 bg-black">
-      <div class="container">
-        <div class="p-3 rounded-4 border border-danger pokedex-header">
-          <div class="d-flex align-items-center gap-3 flex-wrap">
-            <div class="pokedex-lights">
-              <span class="big"></span>
-              <span class="s red"></span>
-              <span class="s yellow"></span>
-              <span class="s green"></span>
-            </div>
-
-            <div>
-              <h1 class="h3 mb-1 text-white">Dashboard ShaSitter</h1>
-              <p class="mb-0 text-secondary">
-                Gestion privée (admin) — prestations, clients, réservations, compta.
-              </p>
-            </div>
-          </div>
-        </div>
-      </div>
-    </header>
-
-    <main class="py-4">
-      <div class="container">
-        <!-- ===================== HOME ===================== -->
-        <section id="panelHome" class="panel active">
-      <div class="card highlight">
-        <div class="cardTitle">💜 Message</div>
-        <div class="muted" style="margin-top:6px; line-height:1.35;">💜 <strong>Shana</strong>, tu es née pour prendre soin d’eux.<br/>Ton attention et ta douceur font toute la différence.</div>
-      </div>
-          <div class="row g-4">
-            <div class="col-lg-5">
-              <div class="card card-soft text-white">
-                <div class="card-body">
-                  <div class="control-pill mb-3">
-                    <div class="d-flex justify-content-between flex-wrap gap-2">
-                      <div>
-                        <div class="muted">Total (toutes réservations)</div>
-                        <div class="kpi"><span id="kpiTotalAll">—</span> CHF</div>
-                      </div>
-                      <div>
-                        <div class="muted">Part ShaSitter</div>
-                        <div class="kpi text-warning"><span id="kpiTotalCompany">—</span> CHF</div>
-                      </div>
-                      <div>
-                        <div class="muted">Part Employés</div>
-                        <div class="kpi text-danger"><span id="kpiTotalEmployees">—</span> CHF</div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div class="mini mb-3">
-                    <div class="fw-bold mb-2">⏰ À venir (résumé)</div>
-                    <div class="muted">Réservations: <span id="kpiUpcomingCount">—</span></div>
-                    <div class="muted">Prochaine: <span id="kpiNextBooking">—</span></div>
-                  </div>
-
-                  <div class="mini">
-                    <div class="fw-bold mb-2">🧾 Passées (résumé)</div>
-                    <div class="muted">Réservations: <span id="kpiPastCount">—</span></div>
-                  </div>
-
-                  <div class="mt-3 text-secondary small">
-                    ℹ️ Tout ajout / modification se fait via Telegram (menu /start).
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div class="col-lg-7">
-              <div class="card card-soft text-white">
-                <div class="card-body">
-                  <h2 class="h4 mb-2">📅 Réservations à venir</h2>
-                  <div id="upcomingList" class="list-group list-group-flush"></div>
-
-                  <hr class="border-secondary my-4" />
-
-                  <h2 class="h4 mb-2">🧾 Dernières réservations passées</h2>
-                  <div id="pastList" class="list-group list-group-flush"></div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <!-- ===================== CLIENTS ===================== -->
-        <section id="panelClients" class="panel">
-          <div class="card card-soft text-white">
-            <div class="card-body">
-              <div class="d-flex align-items-center justify-content-between gap-2 flex-wrap">
-                <h2 class="h4 mb-0">👤 Clients</h2>
-                <div class="control-pill">
-                  <div class="d-flex gap-2 align-items-center">
-                    <input id="clientsSearch" class="form-control bg-dark text-white border-secondary" type="search" placeholder="Rechercher client…" autocomplete="off" />
-                    <button id="clientsClear" class="btn btn-outline-light" type="button">✕</button>
-                  </div>
-                </div>
-              </div>
-              <div class="mt-3" id="clientsList"></div>
-            </div>
-          </div>
-        </section>
-
-        <!-- ===================== PRESTATIONS ===================== -->
-        <section id="panelPrestations" class="panel">
-          <div class="card card-soft text-white">
-            <div class="card-body">
-              <div class="d-flex align-items-center justify-content-between gap-2 flex-wrap">
-                <h2 class="h4 mb-0">🐾 Prestations</h2>
-                <div class="control-pill">
-                  <div class="d-flex gap-2 align-items-center">
-                    <select id="prestaAnimalFilter" class="form-select bg-dark text-white border-secondary" style="width:auto;">
-                      <option value="all">Tous</option>
-                      <option value="chat">Chats</option>
-                      <option value="lapin">Lapins</option>
-                      <option value="autre">Autres</option>
-                    </select>
-                    <input id="prestaSearch" class="form-control bg-dark text-white border-secondary" type="search" placeholder="Rechercher prestation…" autocomplete="off" />
-                    <button id="prestaClear" class="btn btn-outline-light" type="button">✕</button>
-                  </div>
-                </div>
-              </div>
-              <div class="mt-3" id="prestationsGrid"></div>
-            </div>
-          </div>
-        </section>
-
-        <!-- ===================== BOOKINGS ===================== -->
-        <section id="panelBookings" class="panel">
-          
-
-          <div class="card card-soft text-white mb-4">
-            <div class="card-body">
-              <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
-                <div>
-                  <h2 class="h5 mb-1">📅 Réservations — filtres & export</h2>
-                  <div class="muted">Filtre par client / dates, puis export Google Agenda (.ics ou lien).</div>
-                </div>
-                <div class="control-pill">
-                  <div class="d-flex flex-wrap gap-2 align-items-center">
-                    <select id="bookingsClientFilter" class="form-select bg-dark text-white border-secondary" style="width:auto; min-width:220px;">
-                      <option value="all">Tous les clients</option>
-                    </select>
-                    <input id="bookingsFrom" class="form-control bg-dark text-white border-secondary" type="date" />
-                    <input id="bookingsTo" class="form-control bg-dark text-white border-secondary" type="date" />
-                    <button id="bookingsReset" class="btn btn-outline-light" type="button">Réinitialiser</button>
-                    <button id="bookingsExportAll" class="btn btn-success" type="button">Exporter (.ics)</button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-<div class="row g-4">
-            <div class="col-lg-6">
-              <div class="card card-soft text-white">
-                <div class="card-body">
-                  <h2 class="h4 mb-2">⏰ À venir</h2>
-                  <div id="bookingsUpcoming" class="list-group list-group-flush"></div>
-                </div>
-              </div>
-            </div>
-            <div class="col-lg-6">
-              <div class="card card-soft text-white">
-                <div class="card-body">
-                  <h2 class="h4 mb-2">🧾 Passées</h2>
-                  <div id="bookingsPast" class="list-group list-group-flush"></div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <!-- ===================== COMPTA ===================== -->
-        <section id="panelCompta" class="panel">
-          <div class="card card-soft text-white">
-            <div class="card-body">
-              <h2 class="h4 mb-3">💰 Comptabilité</h2>
-
-              <div class="row g-3">
-                <div class="col-md-4">
-                  <div class="mini">
-                    <div class="muted">Total</div>
-                    <div class="kpi"><span id="comptaTotal">—</span> CHF</div>
-                  </div>
-                </div>
-                <div class="col-md-4">
-                  <div class="mini">
-                    <div class="muted">Employés</div>
-                    <div class="kpi text-danger"><span id="comptaEmp">—</span> CHF</div>
-                  </div>
-                </div>
-                <div class="col-md-4">
-                  <div class="mini">
-                    <div class="muted">ShaSitter</div>
-                    <div class="kpi text-warning"><span id="comptaCo">—</span> CHF</div>
-                  </div>
-                </div>
-              </div>
-
-              <hr class="border-secondary my-4" />
-
-              <div class="row g-4">
-                <div class="col-lg-6">
-                  <div class="mini">
-                    <div class="fw-bold mb-2">📅 Total par mois</div>
-                    <div id="comptaMonths"></div>
-                  </div>
-                </div>
-
-                <div class="col-lg-6">
-                  <div class="mini">
-                    <div class="fw-bold mb-2">🏷️ Top clients</div>
-                    <div id="comptaClients"></div>
-                  </div>
-                  <div class="mini mt-3">
-                    <div class="fw-bold mb-2">🐾 Top prestations</div>
-                    <div id="comptaPrestations"></div>
-                  </div>
-                </div>
-              </div>
-
-              <div class="mt-3 text-secondary small">
-                ℹ️ Graphiques “simples” ici = barres / listes (rapides & lisibles dans Telegram).
-              </div>
-            </div>
-          </div>
-        </section>
-      </div>
-    </main>
-
-    <footer class="py-4 bg-black border-top border-danger">
-      <div class="container text-center text-secondary">
-        ShaSitter © <span id="year"></span>
-      </div>
-    </footer>
-
-    
-    <!-- ===================== MODAL EDIT BOOKING ===================== -->
-    <div class="modal fade" id="modalEditBooking" tabindex="-1" aria-hidden="true">
-      <div class="modal-dialog modal-dialog-centered">
-        <div class="modal-content bg-dark text-white border border-danger">
-          <div class="modal-header">
-            <h5 class="modal-title">✏️ Modifier réservation</h5>
-            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
-          </div>
-          <div class="modal-body">
-            <div class="small muted mb-2">#<span id="ebId">—</span></div>
-
-            <label class="form-label">Prestation</label>
-            <select id="ebPrestation" class="form-select mb-3"></select>
-
-            <div class="row g-2">
-              <div class="col-6">
-                <label class="form-label">Début</label>
-                <input id="ebStart" type="date" class="form-control" />
-              </div>
-              <div class="col-6">
-                <label class="form-label">Fin</label>
-                <input id="ebEnd" type="date" class="form-control" />
-              </div>
-            </div>
-
-            <label class="form-label mt-3">Créneau</label>
-            <select id="ebSlot" class="form-select">
-              <option value="matin">matin</option>
-              <option value="soir">soir</option>
-              <option value="matin_soir">matin+soir</option>
-            </select>
-
-            <label class="form-label mt-3">Montant (optionnel)</label>
-<input id="ebTotalOverride" type="number" step="0.01" class="form-control" placeholder="Ex: 120.00 (utile pour devis)" />
-
-<div class="mt-3">
-  <div class="muted small">ℹ️ Packs: prix “par jour”. Services: prix “par visite” (x1 matin/soir, x2 matin+soir). Suppléments / ménage: unique. Devis: montant libre.</div>
+<nav class="navbar navbar-dark" style="background:#0e0e15;border-bottom:1px solid #a855f755;">
+<div class="container">
+<span class="navbar-brand fw-bold" style="color:#a855f7;">ShaSitter</span>
 </div>
-          </div>
-          <div class="modal-footer">
-            <button id="ebDelete" type="button" class="btn btn-outline-danger">🗑️ Supprimer</button>
-            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
-            <button id="ebSave" type="button" class="btn btn-warning">Enregistrer</button>
-          </div>
-        </div>
-      </div>
-    </div>
+</nav>
 
-<div id="toast">—</div>
+<main class="container py-4">
 
-    <!-- bottom nav -->
-    <nav id="bottomNav" class="bottom-nav">
-      <button id="btnHome" class="bn-item active" type="button"><span class="bn-ico">🏠</span><span class="bn-txt">Accueil</span></button>
-      <button id="btnClients" class="bn-item" type="button"><span class="bn-ico">👤</span><span class="bn-txt">Clients</span></button>
-      <button id="btnPrestations" class="bn-item" type="button"><span class="bn-ico">🐾</span><span class="bn-txt">Prestations</span></button>
-      <button id="btnBookings" class="bn-item" type="button"><span class="bn-ico">📅</span><span class="bn-txt">Réservations</span></button>
-      <button id="btnCompta" class="bn-item" type="button"><span class="bn-ico">💰</span><span class="bn-txt">Compta</span></button>
-    </nav>
+<!-- HOME -->
+<section id="panelHome" class="panel active">
 
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/js/bootstrap.bundle.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-  <script src="js/pokedex.js"></script>
-    <script>
-      document.getElementById("year").textContent = new Date().getFullYear();
-    </script>
-  </body>
+<div class="shana-card">
+<h2>💜 Shana, tu es née pour prendre soin d’eux.</h2>
+<div style="opacity:.8;">
+Ton attention et ta douceur font toute la différence.
+</div>
+</div>
+
+<div class="row g-4">
+<div class="col-lg-5">
+<div class="card card-soft p-3">
+<h4>💰 Résumé</h4>
+<div>Total : <strong><span id="kpiTotalAll">—</span> CHF</strong></div>
+<div>ShaSitter : <strong><span id="kpiTotalCompany">—</span> CHF</strong></div>
+<div>Employés : <strong><span id="kpiTotalEmployees">—</span> CHF</strong></div>
+</div>
+</div>
+
+<div class="col-lg-7">
+<div class="card card-soft p-3">
+<h4>📅 Réservations à venir</h4>
+<div id="upcomingList"></div>
+</div>
+</div>
+</div>
+
+</section>
+
+<!-- PRESTATIONS -->
+<section id="panelPrestations" class="panel">
+<div class="card card-soft p-3">
+<h4>🐾 Prestations</h4>
+<div id="prestationsGrid"></div>
+</div>
+</section>
+
+<!-- BOOKINGS -->
+<section id="panelBookings" class="panel">
+<div class="card card-soft p-3">
+<h4>📅 Réservations</h4>
+<div id="bookingsUpcoming"></div>
+</div>
+</section>
+
+<!-- COMPTA -->
+<section id="panelCompta" class="panel">
+<div class="card card-soft p-3">
+<h4>💰 Comptabilité</h4>
+
+<div style="max-width:400px;margin:auto;">
+<canvas id="comptaChart"></canvas>
+</div>
+
+<div class="mt-4">
+<h6>🏷️ Top prestations</h6>
+<div id="comptaPrestations"></div>
+</div>
+
+</div>
+</section>
+
+</main>
+
+<nav class="bottom-nav">
+<button id="btnHome" class="bn-item active">🏠</button>
+<button id="btnPrestations" class="bn-item">🐾</button>
+<button id="btnBookings" class="bn-item">📅</button>
+<button id="btnCompta" class="bn-item">💰</button>
+</nav>
+
+<script src="js/pokedex.js"></script>
+</body>
 </html>
