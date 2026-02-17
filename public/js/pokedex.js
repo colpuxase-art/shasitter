@@ -6,112 +6,111 @@
   }
 
   /* ================= HELPERS ================= */
-  const $ = (id) => document.getElementById(id);
-  const safe = (v) => (v == null ? "" : String(v));
-  const norm = (v) => safe(v).trim().toLowerCase();
-  const money = (n) => {
-    const x = Number(n || 0);
-    if (!Number.isFinite(x)) return "0.00";
-    return (Math.round(x * 100) / 100).toFixed(2);
+const $ = (id) => document.getElementById(id);
+const safe = (v) => (v == null ? "" : String(v));
+const norm = (v) => safe(v).trim().toLowerCase();
 
-  const pad2 = (n) => String(n).padStart(2, "0");
-  const ymd = (d) => {
-    const x = new Date(d);
-    if (Number.isNaN(x.getTime())) return "";
-    return `${x.getFullYear()}-${pad2(x.getMonth() + 1)}-${pad2(x.getDate())}`;
-  };
-  const ymdCompact = (d) => {
-    const x = new Date(d);
-    if (Number.isNaN(x.getTime())) return "";
-    return `${x.getFullYear()}${pad2(x.getMonth() + 1)}${pad2(x.getDate())}`;
-  };
-  const addDays = (dateStr, days) => {
-    const x = new Date(dateStr);
-    x.setDate(x.getDate() + days);
-    return x;
-  };
+const money = (n) => {
+  const x = Number(n || 0);
+  if (!Number.isFinite(x)) return "0.00";
+  return (Math.round(x * 100) / 100).toFixed(2);
+};
 
-  function buildGoogleTemplateUrl(b) {
-    // all-day event: end date is exclusive => +1 day
+const pad2 = (n) => String(n).padStart(2, "0");
+const ymd = (d) => {
+  const x = new Date(d);
+  if (Number.isNaN(x.getTime())) return "";
+  return `${x.getFullYear()}-${pad2(x.getMonth() + 1)}-${pad2(x.getDate())}`;
+};
+const ymdCompact = (d) => {
+  const x = new Date(d);
+  if (Number.isNaN(x.getTime())) return "";
+  return `${x.getFullYear()}${pad2(x.getMonth() + 1)}${pad2(x.getDate())}`;
+};
+const addDays = (dateStr, days) => {
+  const x = new Date(dateStr);
+  x.setDate(x.getDate() + days);
+  return x;
+};
+
+function buildGoogleTemplateUrl(b) {
+  // all-day event: end date is exclusive => +1 day
+  const start = ymdCompact(b.start_date);
+  const end = ymdCompact(addDays(b.end_date, 1));
+  const c = b.clients?.name || "Client";
+  const p = b.prestations?.name || "Prestation";
+  const slot = b.slot ? b.slot.replace("matin_soir", "matin+soir") : "";
+  const text = encodeURIComponent(`ShaSitter • ${c} • ${p}`);
+  const details = encodeURIComponent(
+    [
+      `Réservation #${b.id}`,
+      `Dates: ${safe(b.start_date)} → ${safe(b.end_date)} (${safe(b.days_count)} jour(s))`,
+      slot ? `Créneau: ${slot}` : "",
+      b.clients?.phone ? `Téléphone: ${b.clients.phone}` : "",
+      b.clients?.address ? `Adresse: ${b.clients.address}` : "",
+      b.notes ? `Notes: ${b.notes}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n")
+  );
+  const location = encodeURIComponent(b.clients?.address || "");
+  return `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${text}&dates=${start}/${end}&details=${details}&location=${location}`;
+}
+
+function buildICSForBookings(bookings) {
+  const dtstamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+  const lines = [];
+  lines.push("BEGIN:VCALENDAR");
+  lines.push("VERSION:2.0");
+  lines.push("PRODID:-//ShaSitter//Bookings Export//FR");
+  lines.push("CALSCALE:GREGORIAN");
+  for (const b of bookings) {
+    const uid = `booking-${b.id}@shasitter`;
     const start = ymdCompact(b.start_date);
-    const end = ymdCompact(addDays(b.end_date, 1));
+    const end = ymdCompact(addDays(b.end_date, 1)); // exclusive
     const c = b.clients?.name || "Client";
     const p = b.prestations?.name || "Prestation";
     const slot = b.slot ? b.slot.replace("matin_soir", "matin+soir") : "";
-    const text = encodeURIComponent(`ShaSitter • ${c} • ${p}`);
-    const details = encodeURIComponent(
-      [
-        `Réservation #${b.id}`,
-        `Dates: ${safe(b.start_date)} → ${safe(b.end_date)} (${safe(b.days_count)} jour(s))`,
-        slot ? `Créneau: ${slot}` : "",
-        b.clients?.phone ? `Téléphone: ${b.clients.phone}` : "",
-        b.clients?.address ? `Adresse: ${b.clients.address}` : "",
-        b.notes ? `Notes: ${b.notes}` : "",
-      ]
-        .filter(Boolean)
-        .join("\n")
-    );
-    const location = encodeURIComponent(b.clients?.address || "");
-    return `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${text}&dates=${start}/${end}&details=${details}&location=${location}`;
+    const summary = `ShaSitter • ${c} • ${p}${slot ? " • " + slot : ""}`;
+    const desc = [
+      `Réservation #${b.id}`,
+      `Dates: ${safe(b.start_date)} → ${safe(b.end_date)} (${safe(b.days_count)} jour(s))`,
+      slot ? `Créneau: ${slot}` : "",
+      b.clients?.phone ? `Téléphone: ${b.clients.phone}` : "",
+      b.clients?.address ? `Adresse: ${b.clients.address}` : "",
+      b.notes ? `Notes: ${b.notes}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
+    const loc = b.clients?.address || "";
+    lines.push("BEGIN:VEVENT");
+    lines.push(`UID:${uid}`);
+    lines.push(`DTSTAMP:${dtstamp}`);
+    lines.push(`DTSTART;VALUE=DATE:${start}`);
+    lines.push(`DTEND;VALUE=DATE:${end}`);
+    lines.push(`SUMMARY:${summary.replace(/\n/g, " ")}`);
+    lines.push(`DESCRIPTION:${desc.replace(/\n/g, "\\n")}`);
+    if (loc) lines.push(`LOCATION:${loc.replace(/\n/g, " ")}`);
+    lines.push("END:VEVENT");
   }
+  lines.push("END:VCALENDAR");
+  return lines.join("\r\n");
+}
 
-  function buildICSForBookings(bookings) {
-    const dtstamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
-    const lines = [];
-    lines.push("BEGIN:VCALENDAR");
-    lines.push("VERSION:2.0");
-    lines.push("PRODID:-//ShaSitter//Bookings Export//FR");
-    lines.push("CALSCALE:GREGORIAN");
-    for (const b of bookings) {
-      const uid = `booking-${b.id}@shasitter`;
-      const start = ymdCompact(b.start_date);
-      const end = ymdCompact(addDays(b.end_date, 1)); // exclusive
-      const c = b.clients?.name || "Client";
-      const p = b.prestations?.name || "Prestation";
-      const slot = b.slot ? b.slot.replace("matin_soir", "matin+soir") : "";
-      const summary = `ShaSitter • ${c} • ${p}`;
-      const desc = [
-        `Réservation #${b.id}`,
-        `Dates: ${safe(b.start_date)} → ${safe(b.end_date)} (${safe(b.days_count)} jour(s))`,
-        slot ? `Créneau: ${slot}` : "",
-        b.clients?.phone ? `Téléphone: ${b.clients.phone}` : "",
-        b.clients?.address ? `Adresse: ${b.clients.address}` : "",
-        b.notes ? `Notes: ${b.notes}` : "",
-      ]
-        .filter(Boolean)
-        .join("\n");
-      const loc = b.clients?.address || "";
-      // Basic line folding is skipped for simplicity; Google Calendar is tolerant for typical lengths.
-      lines.push("BEGIN:VEVENT");
-      lines.push(`UID:${uid}`);
-      lines.push(`DTSTAMP:${dtstamp}`);
-      lines.push(`DTSTART;VALUE=DATE:${start}`);
-      lines.push(`DTEND;VALUE=DATE:${end}`);
-      lines.push(`SUMMARY:${summary.replace(/\n/g, " ")}`);
-      lines.push(`DESCRIPTION:${desc.replace(/\n/g, "\\n")}`);
-      if (loc) lines.push(`LOCATION:${loc.replace(/\n/g, " ")}`);
-      lines.push("END:VEVENT");
-    }
-    lines.push("END:VCALENDAR");
-    return lines.join("\r\n");
-  }
+function downloadTextFile(filename, content, mime = "text/plain") {
+  const blob = new Blob([content], { type: mime });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => {
+    URL.revokeObjectURL(a.href);
+    a.remove();
+  }, 0);
+}
 
-  function downloadTextFile(filename, content, mime = "text/plain") {
-    const blob = new Blob([content], { type: mime });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(() => {
-      URL.revokeObjectURL(a.href);
-      a.remove();
-    }, 0);
-  }
-
-  };
-
-  function toast(msg) {
+function toast(msg) {
     const el = $("toast");
     if (!el) return;
     el.textContent = msg;
@@ -384,38 +383,8 @@
     };
 
     if (upEl) {
-      const list = upcoming.slice(0, 40);
-      if (!list.length) {
-        upEl.innerHTML = `<div class="muted">Aucune réservation à venir.</div>`;
-      } else {
-        const map = new Map();
-        for (const b of list) {
-          const c = b.clients?.name || "—";
-          const pet = b.pets?.name || "—";
-          const key = `${c}||${pet}`;
-          if (!map.has(key)) map.set(key, { c, pet, items: [] });
-          map.get(key).items.push(b);
-        }
-        const blocks = [...map.values()].slice(0, 10).map((g) => {
-          const lines = g.items
-            .slice(0, 6)
-            .map((b) => {
-              const p = b.prestations?.name || "—";
-              const slot = b.slot ? b.slot.replace("matin_soir", "matin+soir") : "—";
-              return `<div class="muted">• ${safe(b.start_date)}→${safe(b.end_date)} • ${slot} • ${safe(p)}</div>`;
-            })
-            .join("");
-          const more = g.items.length > 6 ? `<div class="muted small">… +${g.items.length - 6} autre(s)</div>` : "";
-          return `
-            <div class="list-group-item rounded-3 mb-2">
-              <div class="fw-bold">${safe(g.c)}</div>
-              <div class="muted">🐾 ${safe(g.pet)}</div>
-              <div class="mt-2">${lines}${more}</div>
-            </div>
-          `;
-        });
-        upEl.innerHTML = blocks.join("");
-      }
+      const list = upcoming.slice(0, 8);
+      upEl.innerHTML = list.length ? list.map(makeItem).join("") : `<div class="muted">Aucune réservation à venir.</div>`;
     }
 
     if (paEl) {
@@ -641,35 +610,42 @@
     const pastF = filterBookings(past).sort((a, b) => new Date(b.start_date) - new Date(a.start_date));
 
     const makeItem = (b) => {
-      const c = b.clients?.name || "—";
-      const p = b.prestations?.name || "—";
-      const emp = b.employees?.name ? `👩‍💼 ${b.employees.name}` : "—";
-      const slot = b.slot ? b.slot.replace("matin_soir", "matin+soir") : "—";
-      return `
-        <div class="list-group-item rounded-3 mb-2">
-          <div class="d-flex justify-content-between align-items-start gap-2">
-            <div>
-              <div class="fw-bold">#${b.id} • ${c}</div>
-              <div class="muted">${safe(b.start_date)} → ${safe(b.end_date)} • ${safe(b.days_count)} jour(s)</div>
-              <div class="muted">🐾 ${p} • ⏰ ${slot}</div>
-              <div class="muted">Employé: ${emp}</div>
-            </div>
-            <div class="d-flex gap-2 flex-wrap justify-content-end">
-              <a class="btn btn-sm btn-success" target="_blank" rel="noopener" href="${buildGoogleTemplateUrl(b)}">📅 Google</a>
-              <button class="btn btn-sm btn-outline-success act-export-ics" data-id="${b.id}">⬇️ .ics</button>
-              <button class="btn btn-sm btn-outline-warning act-edit-booking" data-id="${b.id}">✏️</button>
-              <button class="btn btn-sm btn-outline-danger act-del-booking" data-id="${b.id}">🗑️</button>
-            </div>
-          </div>
+  const c = b.clients?.name || "—";
+  const petName = b.pets?.name || "—";
+  const petType = (b.pets?.type || b.pets?.animal_type || "").toLowerCase();
+  const petEmoji = petType.includes("lap") || petType.includes("rabbit") ? "🐰" : "🐱";
 
-          <div class="mt-2 d-flex gap-2 flex-wrap">
-            <span class="badge text-bg-danger">Total ${money(b.total_chf)} CHF</span>
+  const p = b.prestations?.name || "—";
+  const dur = b.prestations?.duration_min ? `${b.prestations.duration_min} min` : (b.prestations?.visits_per_day ? `${b.prestations.visits_per_day} visite/j` : "—");
+  const emp = b.employees?.name ? `👩‍💼 ${b.employees.name}` : "—";
+  const slot = b.slot ? b.slot.replace("matin_soir", "matin+soir") : "—";
+
+  return `
+    <div class="booking-card">
+      <div class="bc-top">
+        <div>
+          <div class="bc-title">🐾 ${c}</div>
+          <div class="bc-sub">${petEmoji} ${petName} • 📦 ${p}</div>
+          <div class="bc-sub">📅 ${safe(b.start_date)} → ${safe(b.end_date)} • ⏰ ${slot} • ⏱ ${dur}</div>
+          <div class="bc-sub">Employé: ${emp}</div>
+          <div class="bc-tags">
+            <span class="bc-price">${money(b.total_chf)} CHF</span>
             <span class="badge text-bg-warning text-dark">ShaSitter ${money(b.company_part_chf)} CHF</span>
             <span class="badge text-bg-secondary">Employé ${money(b.employee_part_chf)} CHF</span>
           </div>
         </div>
-      `;
-    };
+
+        <div class="bc-actions">
+          <a class="btn btn-sm btn-success" target="_blank" rel="noopener" href="${buildGoogleTemplateUrl(b)}">📅</a>
+          <button class="btn btn-sm btn-outline-success act-export-ics" data-id="${b.id}">.ics</button>
+          <button class="btn btn-sm btn-outline-warning act-edit-booking" data-id="${b.id}">✏️</button>
+          <button class="btn btn-sm btn-outline-danger act-del-booking" data-id="${b.id}">🗑️</button>
+        </div>
+      </div>
+    </div>
+  `;
+};
+};
 
     const renderGrouped = (list, el, limit = null) => {
       if (!el) return;
@@ -770,65 +746,52 @@
         .map((p) => `<div class="d-flex justify-content-between mb-1"><div class="muted">${safe(p.name)}</div><div class="fw-bold">${money(p.total)} CHF</div></div>`)
         .join("") || `<div class="muted">—</div>`;
     }
+// Camembert (Chart.js)
+const canvas = document.getElementById("comptaPie");
+if (canvas && window.Chart) {
+  const src = (compta && Array.isArray(compta.byPackFamily) && compta.byPackFamily.length)
+    ? compta.byPackFamily
+    : (compta && Array.isArray(compta.byCategory) ? compta.byCategory : []);
 
-    // Pie chart (Chart.js) — top prestations
-    const pieCanvas = $("comptaPie");
-    if (pieCanvas && window.Chart) {
-      const rows = (compta.topPrestations || []).map((p) => ({
-        name: safe(p.name) || "—",
-        total: Number(p.total || 0),
-      }));
+  const labels = src.map((x) => String(x.key || x.label || "—"));
+  const values = src.map((x) => Number(x.total || 0));
 
-      const topN = 6;
-      const top = rows.slice(0, topN);
-      const rest = rows.slice(topN);
-      const restTotal = rest.reduce((a, b) => a + (Number.isFinite(b.total) ? b.total : 0), 0);
+  // détruire l'ancien graphique
+  if (comptaPieChart) {
+    try { comptaPieChart.destroy(); } catch {}
+    comptaPieChart = null;
+  }
 
-      const labels = top.map((x) => x.name).concat(restTotal > 0 ? ["Autres"] : []);
-      const data = top.map((x) => x.total).concat(restTotal > 0 ? [restTotal] : []);
-
-      // simple palette
-      const colors = labels.map((_, i) => `hsl(${(i * 57) % 360} 70% 55% / 0.85)`);
-
-      const cfg = {
-        type: "pie",
-        data: {
-          labels,
-          datasets: [
-            {
-              data,
-              backgroundColor: colors,
-              borderColor: "rgba(255,255,255,.14)",
-              borderWidth: 1,
-            },
-          ],
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          plugins: {
-            legend: {
-              position: "bottom",
-              labels: { color: "rgba(255,255,255,.85)" },
-            },
-            tooltip: {
-              callbacks: {
-                label: (ctx) => `${ctx.label}: ${money(ctx.parsed)} CHF`,
+  if (labels.length && values.some((v) => v > 0)) {
+    comptaPieChart = new window.Chart(canvas, {
+      type: "pie",
+      data: {
+        labels,
+        datasets: [{ data: values }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { position: "bottom" },
+          tooltip: {
+            callbacks: {
+              label: (ctx) => {
+                const v = ctx.parsed || 0;
+                return `${ctx.label}: ${money(v)} CHF`;
               },
             },
           },
         },
-      };
+      },
+    });
+  } else {
+    // rien à afficher
+    const g = canvas.getContext("2d");
+    g.clearRect(0, 0, canvas.width, canvas.height);
+  }
+}
 
-      if (comptaPieChart) {
-        comptaPieChart.data.labels = cfg.data.labels;
-        comptaPieChart.data.datasets[0].data = cfg.data.datasets[0].data;
-        comptaPieChart.data.datasets[0].backgroundColor = cfg.data.datasets[0].backgroundColor;
-        comptaPieChart.update();
-      } else {
-        comptaPieChart = new Chart(pieCanvas.getContext("2d"), cfg);
-      }
-    }
   }
 
   function renderAll() {

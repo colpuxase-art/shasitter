@@ -581,6 +581,19 @@ app.get("/api/compta/summary", requireAdminWebApp, async (req, res) => {
     const prestas = await dbListPrestations(false);
     const cName = new Map(clients.map((c) => [String(c.id), c.name]));
     const pName = new Map(prestas.map((p) => [String(p.id), p.name]));
+    const pFamily = new Map(prestas.map((p) => [String(p.id), p.pack_family || p.category || "autre"]));
+    const pCategory = new Map(prestas.map((p) => [String(p.id), p.category || "autre"]));
+
+    const byPackFamily = new Map();
+    const byCategory = new Map();
+    for (const b of bookings) {
+      const pkey = String(b.prestation_id);
+      const fam = String(pFamily.get(pkey) || "autre");
+      const cat = String(pCategory.get(pkey) || "autre");
+      byPackFamily.set(fam, (byPackFamily.get(fam) || 0) + Number(b.total_chf || 0));
+      byCategory.set(cat, (byCategory.get(cat) || 0) + Number(b.total_chf || 0));
+    }
+
 
     const months = [...byMonth.entries()]
       .sort((a, b) => a[0].localeCompare(b[0]))
@@ -603,6 +616,12 @@ app.get("/api/compta/summary", requireAdminWebApp, async (req, res) => {
       months,
       topClients,
       topPrestations,
+      byPackFamily: [...byPackFamily.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .map(([key, total]) => ({ key, total: money2(total) })),
+      byCategory: [...byCategory.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .map(([key, total]) => ({ key, total: money2(total) })),
     });
   } catch (e) {
     res.status(500).json({ error: "db_error", message: e.message });
@@ -1350,37 +1369,17 @@ bot.on("callback_query", async (q) => {
   if (q.data === "list_upcoming") {
     const rows = await dbUpcomingBookings();
     if (!rows.length) return bot.sendMessage(chatId, "⏰ Aucune réservation à venir.", kb([[{ text: "⬅️ Retour", callback_data: "back_main" }]]));
-
-    // Affichage plus lisible : blocs par client/animal
-    const byKey = new Map();
-    for (const b of rows.slice(0, 60)) {
-      const cName = b.clients?.name || `Client #${b.client_id}`;
-      const petName = b.pets?.name || "—";
-      const key = `${cName}||${petName}`;
-      if (!byKey.has(key)) byKey.set(key, { cName, petName, items: [] });
-      byKey.get(key).items.push(b);
-    }
-
-    const blocks = [...byKey.values()].map((g) => {
-      const lines = g.items
-        .slice(0, 12)
-        .map((b) => {
-          const p = b.prestations?.name || "—";
-          const slot = b.slot ? String(b.slot).replace("matin_soir", "matin+soir") : "—";
-          return `• ${b.start_date}→${b.end_date} (${slot}) — ${p} — *${money2(b.total_chf)} CHF*`;
-        })
-        .join("\n");
-
-      const more = g.items.length > 12 ? `\n… +${g.items.length - 12} autre(s)` : "";
-      return `*${g.cName}*\n🐾 ${g.petName}\n${lines}${more}`;
-    });
-
-    // Limite sécurité longueur message
-    const txt = blocks.join("\n\n").slice(0, 3500);
-    return bot.sendMessage(chatId, `⏰ *À venir* (blocs)\n\n${txt}`, {
-      parse_mode: "Markdown",
-      ...kb([[{ text: "⬅️ Retour", callback_data: "back_main" }]]),
-    });
+    const txt = rows
+      .slice(0, 30)
+      .map((b) => {
+        const c = b.clients?.name || "—";
+        const pet = b.pets?.name ? ` • 🐾 ${b.pets.name}` : "";
+        const p = b.prestations?.name || "—";
+        const emp = b.employees?.name ? ` • 👩‍💼 ${b.employees.name}` : "";
+        return `#${b.id} • ${b.start_date}→${b.end_date} • ${c}${pet} • ${p}${emp} • ${b.total_chf} CHF`;
+      })
+      .join("\n");
+    return bot.sendMessage(chatId, `⏰ *À venir*:\n\n${txt}`, { parse_mode: "Markdown", ...kb([[{ text: "⬅️ Retour", callback_data: "back_main" }]]) });
   }
 
   if (q.data === "list_past") {
