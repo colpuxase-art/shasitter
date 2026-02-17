@@ -1,5 +1,4 @@
 /* index.cjs — ShaSitter (PRIVATE Telegram mini-app) — CLEAN + PETS + MENUS + BACK + 409 FIX */
-// @ts-nocheck
 
 const express = require("express");
 const TelegramBot = require("node-telegram-bot-api");
@@ -171,13 +170,6 @@ function money2(n) {
   if (!Number.isFinite(x)) return 0;
   return Math.round(x * 100) / 100;
 }
-
-function toSafeId(val) {
-  const n = Number(val);
-  if (!Number.isFinite(n)) return null;
-  return n;
-}
-
 // ---- Packs: détection famille + optimisation Duo "illimitée" (par période sélectionnée) ----
 function packFamilyFromName(name) {
   const n = String(name || "").toLowerCase();
@@ -573,9 +565,7 @@ app.get("/api/clients/:id/bookings", requireAdminWebApp, async (req, res) => {
 // ✅ Suppression d’une réservation (utilisé par: clients / à venir / passées)
 app.delete("/api/bookings/:id", requireAdminWebApp, async (req, res) => {
   try {
-    const id = toSafeId(req.params.id);
-    if (!id) return res.status(400).json({ error: "invalid_id" });
-    await dbDeleteBooking(id);
+    await dbDeleteBooking(req.params.id);
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: "db_error", message: e.message });
@@ -965,6 +955,9 @@ async function applyDuoDiscountAcrossPeriod(segs, petAnimalType) {
 
   return { segs, duoSummary };
 }
+
+// Safety: make sure the function exists in global scope (helps if referenced dynamically)
+globalThis.applyDuoDiscountAcrossPeriod = applyDuoDiscountAcrossPeriod;
 
 function filterPrestations(prestas, { categories, animal_type, visits_per_day }) {
   const cats = Array.isArray(categories) ? categories : (categories ? [categories] : null);
@@ -1604,12 +1597,23 @@ try {
 bot.onText(/\/start/, (msg) => sendMainMenu(msg.chat.id));
 
 /* ================== CALLBACKS ================== */
+// Robust callback id parsing (avoids NaN -> Postgres bigint error 22P02)
+function safeParseIdFromCb(data, prefix) {
+  if (!data || typeof data !== "string") return null;
+  if (!data.startsWith(prefix)) return null;
+  const raw = data.slice(prefix.length);
+  const id = Number(raw);
+  if (!Number.isFinite(id) || id <= 0) return null;
+  return id;
+}
+
 bot.on("callback_query", async (q) => {
   const chatId = q?.message?.chat?.id;
   if (!chatId) return;
-  await answerCbq(q);
+  try {
+    await answerCbq(q);
 
-  if (!isAdmin(chatId)) return bot.sendMessage(chatId, "⛔ Accès refusé.");
+    if (!isAdmin(chatId)) return bot.sendMessage(chatId, "⛔ Accès refusé.");
 
   /* ----- GLOBAL NAV ----- */
   if (q.data === "back_main") return sendMainMenu(chatId);
@@ -2409,7 +2413,7 @@ const segs = await compileSegments();
     });
   }
   if (q.data?.startsWith("emp_del_yes_")) {
-    const id = toSafeId(q.data.replace("emp_del_yes_", ""));
+    const id = Number(q.data.replace("emp_del_yes_", ""));
     await dbDeleteEmployee(id);
     return bot.sendMessage(chatId, "✅ Employé supprimé.", kb([[{ text: "⬅️ Retour", callback_data: "emp_list" }]]));
   }
@@ -2466,7 +2470,10 @@ const segs = await compileSegments();
     });
   }
   if (q.data?.startsWith("cl_del_yes_")) {
-    const id = toSafeId(q.data.replace("cl_del_yes_", ""));
+    const id = safeParseIdFromCb(q.data, "cl_del_yes_");
+    if (!id) {
+      return bot.sendMessage(chatId, "⚠️ Suppression impossible: ID client invalide.", kb([[{ text: "⬅️ Retour", callback_data: "cl_list" }]]));
+    }
     await dbDeleteClient(id);
     return bot.sendMessage(chatId, "✅ Client supprimé.", kb([[{ text: "⬅️ Retour", callback_data: "cl_list" }]]));
   }
@@ -2547,7 +2554,10 @@ const segs = await compileSegments();
   }
 
   if (q.data?.startsWith("pet_del_")) {
-    const petId = Number(q.data.replace("pet_del_", ""));
+    const petId = safeParseIdFromCb(q.data, "pet_del_");
+    if (!petId) {
+      return bot.sendMessage(chatId, "⚠️ Impossible: ID animal invalide.", kb([[{ text: "⬅️ Retour", callback_data: "cl_list" }]]));
+    }
     const p = await dbGetPet(petId);
     return bot.sendMessage(chatId, "⚠️ Confirmer suppression animal ?", {
       ...kb([
@@ -2558,7 +2568,10 @@ const segs = await compileSegments();
     });
   }
   if (q.data?.startsWith("pet_del_yes_")) {
-    const petId = toSafeId(q.data.replace("pet_del_yes_", ""));
+    const petId = safeParseIdFromCb(q.data, "pet_del_yes_");
+    if (!petId) {
+      return bot.sendMessage(chatId, "⚠️ Suppression impossible: ID animal invalide.");
+    }
     const p = await dbGetPet(petId);
     await dbDeletePet(petId);
     return bot.sendMessage(chatId, "✅ Animal supprimé.", kb([[{ text: "⬅️ Retour", callback_data: `pet_list_${p.client_id}` }]]));
@@ -2629,7 +2642,7 @@ const segs = await compileSegments();
     });
   }
   if (q.data?.startsWith("pre_del_yes_")) {
-    const id = toSafeId(q.data.replace("pre_del_yes_", ""));
+    const id = Number(q.data.replace("pre_del_yes_", ""));
     await dbDeletePrestation(id);
     return bot.sendMessage(chatId, "✅ Prestation supprimée.", kb([[{ text: "⬅️ Retour", callback_data: "pre_list" }]]));
   }
@@ -2642,6 +2655,12 @@ const segs = await compileSegments();
       parse_mode: "Markdown",
       ...kb([[{ text: "⬅️ Retour", callback_data: `pre_open_${id}` }]]),
     });
+  }
+  } catch (err) {
+    console.error("Callback error:", err);
+    try {
+      await bot.sendMessage(chatId, "❌ Une erreur est survenue. Réessaie, ou fais /start.");
+    } catch (_) {}
   }
 });
 
