@@ -886,13 +886,13 @@ function computeLineTotalGlobal(presta, days, slot) {
  * - Techniquement: on calcule un discount, puis on le répartit sur les segments concernés (sans passer en négatif).
  */
 async function applyDuoDiscountAcrossPeriod(segs, petAnimalType) {
-  if (!Array.isArray(segs) || !segs.length) return { segs, duoSummary: [] };
+  if (!Array.isArray(segs) || !segs.length) {
+    return { segs, duoSummary: [] };
+  }
 
-  globalThis.applyDuoDiscountAcrossPeriod = applyDuoDiscountAcrossPeriod;
-}
-
-globalThis.applyDuoDiscountAcrossPeriod = applyDuoDiscountAcrossPeriod;// Précharge prestations + calcule baseTotal
+  // Précharge prestations + calcule baseTotal
   const prestaCache = new Map();
+
   async function getPresta(id) {
     const k = String(id);
     if (prestaCache.has(k)) return prestaCache.get(k);
@@ -902,15 +902,17 @@ globalThis.applyDuoDiscountAcrossPeriod = applyDuoDiscountAcrossPeriod;// Préch
   }
 
   const segInfos = [];
+
   for (let i = 0; i < segs.length; i++) {
     const s = segs[i];
+
     if (!s?.prestation_id) {
       segInfos.push(null);
       continue;
     }
+
     const p = await getPresta(s.prestation_id);
     const days = daysInclusive(s.start_date, s.end_date);
-
     const baseTotal = computeLineTotalGlobal(p, days, s.slot);
 
     s._presta = p;
@@ -919,52 +921,84 @@ globalThis.applyDuoDiscountAcrossPeriod = applyDuoDiscountAcrossPeriod;// Préch
     s._adjTotal = baseTotal;
 
     const family = p.pack_family || packFamilyFromName(p.name);
-    const units = (p.category === "pack") ? (days * Number(p.visits_per_day || 1)) : 0;
+    const units =
+      p.category === "pack"
+        ? days * Number(p.visits_per_day || 1)
+        : 0;
 
-    segInfos.push({ seg: s, presta: p, days, baseTotal, units, family, animalType: p.animal_type || (petAnimalType || "autre") });
+    segInfos.push({
+      seg: s,
+      presta: p,
+      days,
+      baseTotal,
+      units,
+      family,
+      animalType: p.animal_type || petAnimalType || "autre",
+    });
   }
 
-  // Calcule les totaux optimisés (2 unités => pack Duo) puis applique aux segments
-  const adjTotals = await optimizePackTotalsForSegments(segInfos.map((x) => x || { baseTotal: 0 }));
+  // 🔥 Calcul optimisation Duo
+  const adjTotals = await optimizePackTotalsForSegments(
+    segInfos.map((x) => x || { baseTotal: 0 })
+  );
+
   for (let i = 0; i < segs.length; i++) {
     const t = adjTotals[i];
-    if (typeof t === "number" && Number.isFinite(t) && t >= 0) segs[i]._adjTotal = money2(t);
+    if (typeof t === "number" && Number.isFinite(t) && t >= 0) {
+      segs[i]._adjTotal = money2(t);
+    }
   }
 
-  // Résumé (pour info) : par famille, combien de paires + économie
-  const byFam = new Map(); // key => {units, base, adj, pairs}
+  // 🔎 Résumé Duo
+  const byFam = new Map();
+
   for (const info of segInfos) {
     if (!info) continue;
-    const p = info.presta;
-    if (p.category !== "pack") continue;
+    if (info.presta.category !== "pack") continue;
     if (!info.family) continue;
 
     const key = `${info.animalType}::${info.family}`;
     const cur = byFam.get(key) || { units: 0, base: 0, adj: 0 };
+
     cur.units += Number(info.units || 0);
     cur.base += Number(info.baseTotal || 0);
     cur.adj += Number(info.seg?._adjTotal || info.baseTotal || 0);
+
     byFam.set(key, cur);
   }
 
   const duoSummary = [];
+
   for (const [key, v] of byFam.entries()) {
     const [animalType, family] = key.split("::");
     const pairs = Math.floor(Number(v.units || 0) / 2);
     const discountTotal = money2(Number(v.base || 0) - Number(v.adj || 0));
+
     if (pairs >= 1 && discountTotal > 0) {
-      // essaye de récupérer le nom du duo, sinon fallback
       let duoName = `Pack Duo (${family})`;
+
       try {
-        const duo = await getDuoForFamily(family, animalType || petAnimalType || null);
+        const duo = await getDuoForFamily(
+          family,
+          animalType || petAnimalType || null
+        );
         if (duo?.name) duoName = duo.name;
       } catch (e) {}
-      duoSummary.push({ family, pairs, discountTotal, duoName });
+
+      duoSummary.push({
+        family,
+        pairs,
+        discountTotal,
+        duoName,
+      });
     }
   }
 
   return { segs, duoSummary };
 }
+
+// 👇 IMPORTANT : déclaration globale après la fonction
+globalThis.applyDuoDiscountAcrossPeriod = applyDuoDiscountAcrossPeriod;
 
 function filterPrestations(prestas, { categories, animal_type, visits_per_day }) {
   const cats = Array.isArray(categories) ? categories : (categories ? [categories] : null);
