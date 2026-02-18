@@ -218,25 +218,28 @@
   }
 
   function icsEscape(s) {
-    return String(s || '')
-      .replace(/\\/g, '\\\\')
-      .replace(/\n/g, '\\n')
-      .replace(/,/g, '\\,')
-      .replace(/;/g, '\\;');
-  }
+  return String(s ?? "")
+    .replace(/\\/g, "\\\\")
+    .replace(/\n/g, "\\n")
+    .replace(/,/g, "\\,")
+    .replace(/;/g, "\\;");
+}
 
-  function download(filename, text, mime = 'text/plain') {
-    const blob = new Blob([text], { type: mime });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-  }
+  function download(filename, content, mime) {
+  const blob = new Blob([content], { type: mime || "application/octet-stream" });
+  const url = URL.createObjectURL(blob);
 
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+
+  setTimeout(() => {
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, 0);
+}
   function buildICS(bookings) {
     const now = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
     const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//ShaSitter//Reservations//FR', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH'];
@@ -407,10 +410,17 @@
 
     $('#bookingsExportAll')?.addEventListener('click', () => {
       const list = getBookingsFiltered();
-      if (!list.length) return toast('Rien à exporter.');
-      const ics = buildICS(list);
-      download('shasitter-reservations.ics', ics, 'text/calendar');
-      toast('📅 Export .ics généré.');
+if (!list.length) return toast('Rien à exporter.');
+
+let ics = buildICS(list);
+
+// IMPORTANT: normaliser en CRLF (format ICS standard)
+ics = ics.replace(/\r?\n/g, "\r\n");
+
+// IMPORTANT: forcer UTF-8 (BOM)
+download('shasitter-reservations.ics', "\uFEFF" + ics, 'text/calendar;charset=utf-8');
+
+toast('📅 Export .ics généré.');
     });
 
     $('#refreshBtn')?.addEventListener('click', loadAll);
