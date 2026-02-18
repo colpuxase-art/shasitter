@@ -36,9 +36,9 @@ const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE, {
 });
 
 /* ================== ADMIN ================== */
-const ADMIN_IDS = new Set([6675436692]); // <-- ton ID Telegram
+// ================== ADMIN ==================
+const ADMIN_IDS = new Set([6675436692, 8275234190]); // Nicolas + Shana
 const isAdmin = (chatId) => ADMIN_IDS.has(chatId);
-
 /* ================== TELEGRAM BOT (409 FIX — STABLE) ==================
    - IMPORTANT: sur Render => WEB_CONCURRENCY=1
    - On force deleteWebhook(drop_pending_updates) puis startPolling
