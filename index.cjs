@@ -888,7 +888,10 @@ function computeLineTotalGlobal(presta, days, slot) {
 async function applyDuoDiscountAcrossPeriod(segs, petAnimalType) {
   if (!Array.isArray(segs) || !segs.length) return { segs, duoSummary: [] };
 
-  // Précharge prestations + calcule baseTotal
+  globalThis.applyDuoDiscountAcrossPeriod = applyDuoDiscountAcrossPeriod;
+}
+
+globalThis.applyDuoDiscountAcrossPeriod = applyDuoDiscountAcrossPeriod;// Précharge prestations + calcule baseTotal
   const prestaCache = new Map();
   async function getPresta(id) {
     const k = String(id);
