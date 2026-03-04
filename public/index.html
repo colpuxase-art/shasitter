@@ -2,24 +2,42 @@
 <html lang="fr">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
   <title>ShaSitter</title>
-  <link rel="icon" href="assets/favicon.ico" />
+  <link rel="icon" type="image/x-icon" href="assets/favicon.ico" />
+  <link href="css/styles.css" rel="stylesheet" />
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
 
   <style>
-    body { background:#0a0e17; color:#e9ecef; font-family:system-ui; margin:0; }
+    :root { --amber: #ffc107; --red: #dc3545; }
+    body.bg-dark {
+      background: linear-gradient(180deg, #0a0e17, #111827);
+      color: #e9ecef;
+      min-height: 100vh;
+      font-family: system-ui, sans-serif;
+    }
     .panel { display:none; }
     .panel.active { display:block; }
 
     .card-soft {
-      background: rgba(30,41,59,0.95);
+      background: rgba(30,41,59,0.92);
       border: 1px solid rgba(255,255,255,0.1);
       border-radius: 20px;
+      padding: 16px;
     }
 
+    .mini {
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 16px;
+      padding: 14px;
+      text-align: center;
+    }
+
+    .kpi { font-size: 1.85rem; font-weight: 800; }
+
     .day-card {
-      background: rgba(20,25,40,0.95) !important;
+      background: rgba(255,255,255,0.06);
       border: 1px solid rgba(255,255,255,0.12);
       border-radius: 16px;
       padding: 16px;
@@ -35,47 +53,58 @@
       font-weight: 600;
     }
 
-    .mini {
-      background: rgba(255,255,255,0.06);
-      border: 1px solid rgba(255,255,255,0.12);
-      border-radius: 16px;
-      padding: 14px;
-      text-align: center;
-    }
-
-    .kpi { font-size: 1.65rem; font-weight: 800; line-height: 1.1; } /* plus petit pour éviter débordement */
-
     .bottom-nav {
-      position: fixed; bottom: 0; left: 0; right: 0;
+      position: fixed;
+      bottom: 0; left: 0; right: 0;
       background: rgba(15,23,42,0.97);
       padding: 14px 16px 30px;
-      display: flex; gap: 8px; z-index: 1000;
+      display: flex;
+      gap: 8px;
+      z-index: 1000;
     }
 
     .bn-item {
-      flex: 1; padding: 12px 8px; border-radius: 18px;
+      flex: 1;
+      padding: 12px 8px;
+      border-radius: 18px;
       background: rgba(255,255,255,0.05);
       border: 1px solid rgba(255,255,255,0.13);
-      color: white; font-weight: 600;
-      display: flex; flex-direction: column; align-items: center; gap: 4px;
+      color: white;
+      font-weight: 600;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
     }
 
     .bn-item.active {
       background: rgba(255,193,7,0.18);
-      border-color: #ffc107;
+      border-color: var(--amber);
       box-shadow: 0 0 22px rgba(255,193,7,0.4);
     }
 
     #toast {
-      position: fixed; bottom: 120px; left: 50%; transform: translateX(-50%);
-      background: rgba(0,0,0,0.92); color: white; padding: 16px 28px;
-      border-radius: 18px; z-index: 2000; display: none; font-size: 1.12rem;
+      position: fixed;
+      bottom: 120px; left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0,0,0,0.92);
+      color: white;
+      padding: 16px 28px;
+      border-radius: 18px;
+      z-index: 2000;
+      display: none;
+      font-size: 1.12rem;
+    }
+
+    .accordion-button {
+      background: rgba(255,255,255,0.07) !important;
+      color: white !important;
+      border-radius: 16px !important;
     }
   </style>
 </head>
 <body class="bg-dark">
 
-  <!-- Navbar -->
   <nav class="navbar navbar-expand-lg navbar-dark bg-black border-bottom border-danger px-3 py-2">
     <a class="navbar-brand fw-bold text-danger" href="#">ShaSitter</a>
     <div class="ms-auto d-flex gap-2">
@@ -108,8 +137,40 @@
         </div>
       </section>
 
-      <!-- CLIENTS, PRESTATIONS, RÉSERVATIONS (inchangés) -->
-      <!-- ... (je garde tes sections existantes pour ne pas tout recopier) ... -->
+      <!-- CLIENTS -->
+      <section id="panelClients" class="panel">
+        <div class="card-soft p-3">
+          <input id="clientsSearch" class="form-control bg-dark text-white mb-3" placeholder="Rechercher client..." type="search">
+          <div id="clientsList"></div>
+        </div>
+      </section>
+
+      <!-- PRESTATIONS -->
+      <section id="panelPrestations" class="panel">
+        <div class="card-soft p-3">
+          <div class="d-flex gap-2 mb-3">
+            <select id="prestaAnimalFilter" class="form-select bg-dark text-white">
+              <option value="all">Tous les animaux</option>
+              <option value="chat">🐱 Chats</option>
+              <option value="lapin">🐰 Lapins</option>
+              <option value="autre">🐾 Autres</option>
+            </select>
+            <input id="prestaSearch" class="form-control bg-dark text-white" placeholder="Nom de la prestation..." type="search">
+          </div>
+          <div id="prestationsGrid"></div>
+        </div>
+      </section>
+
+      <!-- RÉSERVATIONS -->
+      <section id="panelBookings" class="panel">
+        <div class="card-soft p-3 mb-3">
+          <select id="bookingsClientFilter" class="form-select bg-dark text-white mb-3"></select>
+        </div>
+        <div class="row g-3">
+          <div class="col-6"><div class="card-soft p-3"><h6>⏰ À venir</h6><div id="bookingsUpcoming"></div></div></div>
+          <div class="col-6"><div class="card-soft p-3"><h6>🧾 Passées</h6><div id="bookingsPast"></div></div></div>
+        </div>
+      </section>
 
       <!-- COMPTA -->
       <section id="panelCompta" class="panel">
@@ -136,6 +197,7 @@
   </main>
 
   <footer class="py-3 text-center text-secondary">ShaSitter © <span id="year"></span></footer>
+
   <div id="toast"></div>
 
   <nav class="bottom-nav">
