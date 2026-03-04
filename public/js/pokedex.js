@@ -1,16 +1,22 @@
 (() => {
   'use strict';
 
-  const $ = (sel, root = document) => root.querySelector(sel);
+  const $  = (sel, root = document) => root.querySelector(sel);
   const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
   const state = {
-    clients: [], prestations: [], upcoming: [], past: [], compta: null, activePanel: 'home'
+    clients:     [],
+    prestations: [],
+    upcoming:    [],
+    past:        [],
+    compta:      null,
+    activePanel: 'home'
   };
 
-  const money = n => (Math.round(Number(n||0)*100)/100).toFixed(2);
-  const todayISO = () => new Date().toISOString().slice(0,10);
+  const money = n => (Math.round(Number(n || 0) * 100) / 100).toFixed(2);
+  const today = () => new Date().toISOString().slice(0, 10);
 
+  // Messages motivants – rotation par jour de l'année
   const dailyMessages = [
     "Shana, ta douceur transforme chaque visite en moment magique 🐾✨",
     "Aujourd’hui, les animaux t’attendent avec impatience ! Tu es leur préférée 💖",
@@ -24,257 +30,215 @@
     "Ton cœur grand comme l’univers rend ShaSitter unique 🪐❤️"
   ];
 
-  function getDailyMessage() {
+  function getDailyMotivation() {
     const now = new Date();
     const start = new Date(now.getFullYear(), 0, 0);
-    const doy = Math.floor((now - start) / (1000*60*60*24));
+    const doy = Math.floor((now - start) / 86400000);
     return dailyMessages[doy % dailyMessages.length];
   }
 
   function toast(msg) {
     const el = $('#toast');
+    if (!el) return alert(msg);
     el.textContent = msg;
     el.style.display = 'block';
-    clearTimeout(toast._t);
-    toast._t = setTimeout(() => el.style.display = 'none', 3000);
+    clearTimeout(toast._tid);
+    toast._tid = setTimeout(() => el.style.display = 'none', 3000);
   }
 
   function setPanel(name) {
     state.activePanel = name;
+
     $$('.panel').forEach(p => p.classList.remove('active'));
-    $('#panel' + name[0].toUpperCase() + name.slice(1)).classList.add('active');
+    const panel = $('#panel' + name[0].toUpperCase() + name.slice(1));
+    if (panel) panel.classList.add('active');
 
     $$('.bn-item').forEach(b => b.classList.remove('active'));
-    $('#btn' + name[0].toUpperCase() + name.slice(1)).classList.add('active');
+    const btn = $('#btn' + name[0].toUpperCase() + name.slice(1));
+    if (btn) btn.classList.add('active');
 
-    if (name === 'home') renderHome();
-    if (name === 'clients') renderClients();
+    if (name === 'home')     renderHome();
+    if (name === 'clients')  renderClients();
     if (name === 'prestations') renderPrestations();
-    if (name === 'bookings') renderBookingsPanel();
-    if (name === 'compta') renderCompta();
+    if (name === 'bookings') renderBookings();
+    if (name === 'compta')   renderCompta();
   }
 
-  // ================== ACCUEIL ==================
+  // ────────────────────────────────────────────────
+  // ACCUEIL – uniquement à venir + accordion par jour
+  // ────────────────────────────────────────────────
   function renderHome() {
-    $('#dailyMessage').innerHTML = `<em>${getDailyMessage()}</em>`;
+    $('#dailyMessage').textContent = getDailyMotivation();
 
-    // KPIs globaux
     const c = state.compta || {};
-    $('#kpiTotalAll').textContent = money(c.totalAll ?? c.total ?? 0);
+    $('#kpiTotalAll').textContent     = money(c.totalAll ?? c.total ?? 0);
     $('#kpiTotalCompany').textContent = money(c.totalCompany ?? c.totalCo ?? 0);
     $('#kpiTotalEmployees').textContent = money(c.totalEmployees ?? c.totalEmp ?? 0);
 
-    const up = state.upcoming || [];
-    $('#kpiUpcomingCount').textContent = up.length;
-    $('#kpiNextBooking').textContent = up[0] ? `${up[0].start_date} · ${up[0].clients?.name || ''}` : '—';
+    const upcoming = state.upcoming || [];
 
-    // Accordion par jour
-    const grouped = {};
-    up.forEach(b => {
-      const d = b.start_date || '0000-00-00';
-      if (!grouped[d]) grouped[d] = [];
-      grouped[d].push(b);
+    // Grouper par date de début
+    const byDay = {};
+    upcoming.forEach(b => {
+      const key = b.start_date || 'sans-date';
+      if (!byDay[key]) byDay[key] = [];
+      byDay[key].push(b);
     });
 
-    const days = Object.keys(grouped).sort();
+    const sortedDays = Object.keys(byDay).sort();
+
     let html = '';
-    days.forEach((day, i) => {
-      const items = grouped[day];
+    sortedDays.forEach((day, idx) => {
+      const bookings = byDay[day];
+      const isFirst = idx === 0;
+
       html += `
-        <div class="accordion-item">
+        <div class="accordion-item bg-transparent border-0">
           <h2 class="accordion-header">
-            <button class="accordion-button ${i===0?'':'collapsed'}" type="button" data-bs-toggle="collapse" data-bs-target="#day${day.replace(/-/g,'')}">
-              📅 ${day} <span class="badge bg-secondary ms-3">${items.length}</span>
+            <button class="accordion-button ${isFirst ? '' : 'collapsed'} text-white fw-semibold"
+                    type="button" data-bs-toggle="collapse" data-bs-target="#collapseDay${idx}">
+              📅 ${day} <span class="badge bg-secondary ms-3">${bookings.length}</span>
             </button>
           </h2>
-          <div id="day${day.replace(/-/g,'')}" class="accordion-collapse collapse ${i===0?'show':''}">
-            <div class="accordion-body p-0">
-              ${items.map(bookingCardHome).join('')}
+          <div id="collapseDay${idx}" class="accordion-collapse collapse ${isFirst ? 'show' : ''}">
+            <div class="accordion-body px-1 pb-3">
+              ${bookings.map(b => `
+                <div class="day-card p-3 mb-3 rounded-4 border border-secondary-subtle bg-dark-subtle bg-opacity-25">
+                  <div class="d-flex align-items-start gap-3">
+                    <div style="font-size:3.4rem; line-height:1;">
+                      ${b.pets?.animal_type === 'chat' ? '🐱' :
+                        b.pets?.animal_type === 'lapin' ? '🐰' : '🐾'}
+                    </div>
+                    <div class="flex-grow-1">
+                      <div class="fs-5 fw-bold">${b.clients?.name || '—'}</div>
+                      <div class="fw-medium">${b.prestations?.name || '—'}</div>
+                      <div class="small text-secondary mt-1">
+                        ${b.slot === 'matin' ? '🌅 Matin' :
+                          b.slot === 'soir' ? '🌙 Soir' : '🌅🌙 Matin + Soir'}
+                        • ${b.start_date}${b.start_date !== b.end_date ? ` → ${b.end_date}` : ''}
+                      </div>
+                      ${b.pets?.name ? `<div class="small text-muted mt-1">🐾 ${b.pets.name}</div>` : ''}
+                    </div>
+                  </div>
+                </div>
+              `).join('')}
             </div>
-          </div>
-        </div>`;
-    });
-    $('#upcomingAccordion').innerHTML = html || `<div class="text-center py-5 text-secondary">Aucune réservation à venir</div>`;
-  }
-
-  function bookingCardHome(b) {
-    const animal = b.pets?.animal_type || b.prestations?.animal_type || 'autre';
-    const emoji = animal === 'chat' ? '🐱' : animal === 'lapin' ? '🐰' : '🐾';
-    return `
-      <div class="day-card p-3 mx-2 my-2">
-        <div class="d-flex gap-3">
-          <div style="font-size:3.2rem;flex-shrink:0;">${emoji}</div>
-          <div class="flex-grow-1 min-w-0">
-            <div class="fw-bold fs-5 text-white">${b.clients?.name || '—'}</div>
-            <div class="fw-semibold">${b.prestations?.name || '—'}</div>
-            <div class="small text-secondary">
-              ${b.slot === 'matin' ? '🌅 Matin' : b.slot === 'soir' ? '🌙 Soir' : '🌅🌙 Matin+soir'} • 
-              ${b.start_date}${b.start_date !== b.end_date ? ` → ${b.end_date}` : ''}
-            </div>
-            ${b.pets?.name ? `<div class="small text-muted">🐾 ${b.pets.name}</div>` : ''}
           </div>
         </div>
-      </div>`;
+      `;
+    });
+
+    $('#upcomingAccordion').innerHTML = html || `
+      <div class="text-center py-5 text-secondary">
+        Aucune réservation à venir pour le moment
+      </div>
+    `;
   }
 
-  // ================== RÉSERVATIONS ==================
-  function getClientBookingsSummary(clientId) {
-    const all = [...(state.upcoming||[]), ...(state.past||[])];
-    const bs = all.filter(b => String(b.client_id) === String(clientId));
-    return {
-      total: bs.reduce((s,b)=>s+Number(b.total_chf||0),0),
-      co: bs.reduce((s,b)=>s+Number(b.company_part_chf||0),0),
-      emp: bs.reduce((s,b)=>s+Number(b.employee_part_chf||0),0)
-    };
-  }
+  // ────────────────────────────────────────────────
+  // RÉSERVATIONS (à venir + passées)
+  // ────────────────────────────────────────────────
+  function renderBookings() {
+    const cid = $('#bookingsClientFilter')?.value || '';
 
-  function renderBookingsPanel() {
-    const cid = $('#bookingsClientFilter').value;
-    const filtered = getBookingsFiltered();
+    const allBookings = [...(state.upcoming || []), ...(state.past || [])];
+    let filtered = allBookings;
 
-    const upEl = $('#bookingsUpcoming');
-    const pastEl = $('#bookingsPast');
-    upEl.innerHTML = filtered.filter(b => b.end_date >= todayISO()).map(bookingItem).join('') || '<div class="text-secondary py-4 text-center">Rien à venir</div>';
-    pastEl.innerHTML = filtered.filter(b => b.end_date < todayISO()).map(bookingItem).join('') || '<div class="text-secondary py-4 text-center">Aucune passée</div>';
-
-    // Total client
-    const box = $('#clientTotalBox');
     if (cid && cid !== 'all') {
-      const cl = state.clients.find(c => String(c.id) === cid);
-      const sum = getClientBookingsSummary(cid);
-      $('#selectedClientName').textContent = cl ? cl.name : '';
-      $('#clientTotalPaid').textContent = money(sum.total) + ' CHF';
-      box.style.display = 'block';
-    } else {
-      box.style.display = 'none';
+      filtered = filtered.filter(b => String(b.client_id) === cid);
     }
-  }
 
-  function getBookingsFiltered() {
-    const cid = $('#bookingsClientFilter').value;
-    const from = $('#bookingsFrom').value;
-    const to = $('#bookingsTo').value;
-    let list = [...(state.upcoming||[]), ...(state.past||[])];
-    if (cid && cid !== 'all') list = list.filter(b => String(b.client_id) === cid);
-    if (from) list = list.filter(b => b.end_date >= from);
-    if (to) list = list.filter(b => b.start_date <= to);
-    return list.sort((a,b) => a.start_date.localeCompare(b.start_date));
-  }
+    const upcoming = filtered.filter(b => b.end_date >= today());
+    const past     = filtered.filter(b => b.end_date <  today());
 
-  function bookingItem(b) {
-    return `
-      <button type="button" class="list-group-item list-group-item-action text-white" data-booking-id="${b.id}">
+    $('#bookingsUpcoming').innerHTML = upcoming.map(b => `
+      <div class="list-group-item bg-dark border-secondary text-white mb-2 rounded-3 p-3">
         <div class="d-flex justify-content-between">
           <div>
-            <div class="fw-bold">${b.clients?.name} <span class="text-secondary">#${b.id}</span></div>
-            <div class="small">${b.prestations?.name} • ${b.slot === 'matin'?'🌅':b.slot==='soir'?'🌙':'🌅🌙'} • ${b.start_date} → ${b.end_date}</div>
+            <div class="fw-bold">${b.clients?.name || '—'} #${b.id}</div>
+            <div class="small">${b.prestations?.name || '—'}</div>
+            <div class="small text-secondary">
+              ${b.slot === 'matin' ? '🌅' : b.slot === 'soir' ? '🌙' : '🌅🌙'}
+              • ${b.start_date} → ${b.end_date}
+            </div>
             ${b.pets?.name ? `<div class="small text-muted">🐾 ${b.pets.name}</div>` : ''}
           </div>
-          <div class="text-end fw-bold">${money(b.total_chf)} CHF</div>
+          <div class="text-end fw-bold fs-5">${money(b.total_chf)} CHF</div>
         </div>
-      </button>`;
+      </div>
+    `).join('') || '<p class="text-secondary text-center py-4">Aucune réservation à venir</p>';
+
+    $('#bookingsPast').innerHTML = past.map(b => `
+      <div class="list-group-item bg-dark border-secondary text-white mb-2 rounded-3 p-3 opacity-85">
+        <div class="d-flex justify-content-between">
+          <div>
+            <div class="fw-bold">${b.clients?.name || '—'} #${b.id}</div>
+            <div class="small">${b.prestations?.name || '—'}</div>
+            <div class="small text-secondary">
+              ${b.slot === 'matin' ? '🌅' : b.slot === 'soir' ? '🌙' : '🌅🌙'}
+              • ${b.start_date} → ${b.end_date}
+            </div>
+            ${b.pets?.name ? `<div class="small text-muted">🐾 ${b.pets.name}</div>` : ''}
+          </div>
+          <div class="text-end fw-bold fs-5">${money(b.total_chf)} CHF</div>
+        </div>
+      </div>
+    `).join('') || '<p class="text-secondary text-center py-4">Aucune réservation passée</p>';
   }
 
-  // ================== COMPTA ==================
-  function renderCompta() {
-    const c = state.compta || {};
-    $('#comptaTotal').textContent = money(c.totalAll ?? c.total ?? 0);
-    $('#comptaCo').textContent = money(c.totalCompany ?? c.totalCo ?? 0);
-    $('#comptaEmp').textContent = money(c.totalEmployees ?? c.totalEmp ?? 0);
-
-    // mois / tops (global)
-    // ... (tu peux garder le code existant pour byMonth, topClients, topPrestations)
-
-    // Select client
-    const sel = $('#comptaClientFilter');
-    sel.innerHTML = `<option value="all">Tous les clients</option>` +
-      state.clients.map(cl => `<option value="${cl.id}">${cl.name} (#${cl.id})</option>`).join('');
-
-    const cid = sel.value;
-    const details = $('#clientComptaDetails');
-    if (cid && cid !== 'all') {
-      const s = getClientBookingsSummary(cid);
-      $('#cClientTotal').textContent = money(s.total);
-      $('#cClientCo').textContent = money(s.co);
-      $('#cClientEmp').textContent = money(s.emp);
-      details.style.display = 'flex';
-    } else {
-      details.style.display = 'none';
-    }
-  }
-
-  // ================== AUTRES RENDERS (clients, prestations) ==================
-  // (je les ai gardés quasi identiques mais avec plus d’espace et plus jolis)
-  function renderClients() { /* ... même logique qu’avant avec plus de padding */ }
-  function renderPrestations() {
-    // ... même filtre, mais cartes plus aérées
-    const html = /* tes cartes avec mb-4, plus gros textes, badges catégorie */;
-    $('#prestationsGrid').innerHTML = html;
-  }
-
+  // ────────────────────────────────────────────────
+  // Événements
+  // ────────────────────────────────────────────────
   function wireEvents() {
-    // nav
-    $('#btnHome').onclick = () => setPanel('home');
-    $('#btnClients').onclick = () => setPanel('clients');
-    $('#btnPrestations').onclick = () => setPanel('prestations');
-    $('#btnBookings').onclick = () => setPanel('bookings');
-    $('#btnCompta').onclick = () => setPanel('compta');
+    $('#btnHome')?.addEventListener('click',     () => setPanel('home'));
+    $('#btnClients')?.addEventListener('click',  () => setPanel('clients'));
+    $('#btnPrestations')?.addEventListener('click', () => setPanel('prestations'));
+    $('#btnBookings')?.addEventListener('click', () => setPanel('bookings'));
+    $('#btnCompta')?.addEventListener('click',   () => setPanel('compta'));
 
-    // filters
-    $('#bookingsClientFilter').addEventListener('change', renderBookingsPanel);
-    $('#bookingsFrom,#bookingsTo').forEach(el => el.addEventListener('change', renderBookingsPanel));
-    $('#bookingsReset').onclick = () => {
-      $('#bookingsClientFilter').value = 'all';
-      $('#bookingsFrom').value = '';
-      $('#bookingsTo').value = '';
-      renderBookingsPanel();
-    };
-    $('#bookingsExportAll').onclick = () => { /* ton code ICS existant */ };
+    // Exemples de filtres (à compléter selon tes besoins)
+    $('#bookingsClientFilter')?.addEventListener('change', renderBookings);
+    $('#refreshBtn')?.addEventListener('click', loadAll);
+    $('#closeBtn')?.addEventListener('click', () => window.Telegram?.WebApp?.close?.());
 
-    $('#comptaClientFilter').addEventListener('change', renderCompta);
-
-    $('#refreshBtn').onclick = loadAll;
-    $('#themeBtn').onclick = () => document.body.classList.toggle('bg-dark');
-    $('#closeBtn').onclick = () => window.Telegram?.WebApp?.close();
-
-    // modal (inchangé)
+    // Swipe vertical désactivé (évite de fermer l’app par erreur)
+    if (window.Telegram?.WebApp) {
+      window.Telegram.WebApp.disableVerticalSwipes?.();
+    }
   }
 
   async function loadAll() {
     try {
       const [clients, prestations, upcoming, past, compta] = await Promise.all([
-        fetchJSON('/api/clients'),
-        fetchJSON('/api/prestations'),
-        fetchJSON('/api/bookings/upcoming'),
-        fetchJSON('/api/bookings/past'),
-        fetchJSON('/api/compta/summary')
+        fetch('/api/clients').then(r => r.json()),
+        fetch('/api/prestations').then(r => r.json()),
+        fetch('/api/bookings/upcoming').then(r => r.json()),
+        fetch('/api/bookings/past').then(r => r.json()),
+        fetch('/api/compta/summary').then(r => r.json())
       ]);
 
-      state.clients = clients || [];
+      state.clients     = clients     || [];
       state.prestations = prestations || [];
-      state.upcoming = upcoming || [];
-      state.past = past || [];
-      state.compta = compta || {};
+      state.upcoming    = upcoming    || [];
+      state.past        = past        || [];
+      state.compta      = compta      || {};
 
-      // populate selects
-      const bc = $('#bookingsClientFilter');
-      bc.innerHTML = `<option value="all">Tous les clients</option>` + state.clients.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+      // Remplir le select client (exemple)
+      const sel = $('#bookingsClientFilter');
+      if (sel) {
+        sel.innerHTML = `<option value="all">Tous les clients</option>` +
+          state.clients.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+      }
 
       renderHome();
-      if (state.activePanel === 'clients') renderClients();
-      if (state.activePanel === 'prestations') renderPrestations();
-      if (state.activePanel === 'bookings') renderBookingsPanel();
-      if (state.activePanel === 'compta') renderCompta();
+      if (state.activePanel === 'bookings') renderBookings();
+      // ... appelle les autres render si besoin
 
       $('#year').textContent = new Date().getFullYear();
-    } catch (e) {
-      toast('❌ Erreur de chargement : ' + e.message);
+    } catch (err) {
+      console.error(err);
+      toast('Erreur lors du chargement des données');
     }
-  }
-
-  function fetchJSON(url, opts = {}) {
-    return fetch(url, { headers: {'Content-Type':'application/json'}, ...opts })
-      .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); });
   }
 
   document.addEventListener('DOMContentLoaded', () => {
