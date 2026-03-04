@@ -2,376 +2,131 @@
 <html lang="fr">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
-  <title>Le QG - Shanunu</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>ShaSitter</title>
   <link rel="icon" type="image/x-icon" href="assets/favicon.ico" />
   <link href="css/styles.css" rel="stylesheet" />
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
 
   <style>
-    :root{
-      --pk-red: rgba(220,53,69,1);
-      --pk-amber: rgba(255,193,7,1);
-      --glass: rgba(255,255,255,.06);
-      --glass2: rgba(255,255,255,.10);
-      --line: rgba(255,255,255,.10);
-      --text2: rgba(255,255,255,.70);
+    :root { --amber: #ffc107; --red: #dc3545; }
+    body.bg-dark {
+      background: linear-gradient(180deg, #0a0e17, #111827);
+      color: #e9ecef;
+      min-height: 100vh;
     }
-    body.bg-dark{
-      background: radial-gradient(900px 500px at 15% 10%, rgba(255,193,7,.12), transparent 60%),
-                  radial-gradient(800px 500px at 85% 15%, rgba(220,53,69,.16), transparent 60%),
-                  radial-gradient(900px 700px at 60% 80%, rgba(0,180,255,.10), transparent 55%),
-                  linear-gradient(180deg, #05060b, #070915 45%, #05060b);
-      position: relative;
-      overflow-x: hidden;
-    }
-    body.bg-dark::before{
-      content:"";
-      position:fixed; inset:0;
-      background-image: radial-gradient(circle at 20% 10%, rgba(255,255,255,.12) 0 1px, transparent 2px),
-                        radial-gradient(circle at 70% 30%, rgba(255,255,255,.10) 0 1px, transparent 2px),
-                        radial-gradient(circle at 40% 70%, rgba(255,255,255,.08) 0 1px, transparent 2px);
-      background-size: 320px 320px, 420px 420px, 520px 520px;
-      opacity:.25;
-      animation: starsDrift 14s linear infinite;
-      pointer-events:none;
-      mix-blend-mode: screen;
-    }
-    @keyframes starsDrift{ 0%{ transform: translate3d(0,0,0); } 100%{ transform: translate3d(-60px, 40px, 0); } }
-
     .panel { display:none; }
     .panel.active { display:block; }
-
-    .card-soft{
-      border-radius: 20px;
-      border: 1px solid rgba(255,255,255,.10);
-      background: rgba(0,0,0,.65);
-      box-shadow: 0 0 0 1px rgba(255,255,255,0.04), 0 20px 50px rgba(0,0,0,0.65);
-    }
-    .mini, .control-pill{
-      border-radius: 16px;
-      background: rgba(255,255,255,.04);
-      border: 1px solid rgba(255,255,255,.12);
-      padding: 14px;
-    }
-    .kpi{ font-weight: 900; font-size: 1.45rem; letter-spacing: -.02em; }
-
-    .bottom-nav{
-      position: fixed; left: 0; right: 0; bottom: 0;
-      display: flex; justify-content: space-around; gap: 8px;
-      padding: 12px 12px 20px;
-      background: rgba(0,0,0,.94);
-      border-top: 1px solid rgba(220,53,69,.6);
-      z-index: 9998;
-      backdrop-filter: blur(12px);
-    }
-    .bn-item{
-      flex: 1; border: 1px solid rgba(255,255,255,.12);
-      background: rgba(255,255,255,.04); color: rgba(255,255,255,.9);
-      border-radius: 18px; padding: 12px 8px;
-      display:flex; align-items:center; justify-content:center; gap:8px;
-      font-weight: 700; font-size: .93rem;
-    }
-    .bn-item.active{
-      border-color: var(--pk-amber);
-      box-shadow: 0 0 0 2px rgba(255,193,7,.2), 0 0 20px rgba(255,193,7,.15);
-      background: rgba(255,193,7,.08);
-    }
-    #toast{
-      position: fixed; left: 50%; bottom: 100px; transform: translateX(-50%);
-      padding: 14px 20px; border-radius: 16px;
-      background: rgba(0,0,0,.85); border: 1px solid rgba(255,255,255,.15);
-      color: #fff; font-size: 1.05rem; z-index: 9999; display:none;
-      box-shadow: 0 20px 40px rgba(0,0,0,.6);
-    }
-    .accordion-button{
-      background: rgba(255,255,255,.06) !important;
-      color: #fff !important;
-      font-weight: 600;
-    }
-    .day-card{
-      border-radius: 18px;
-      border: 1px solid rgba(255,255,255,.12);
-      background: rgba(255,255,255,.03);
-      transition: all .2s;
-    }
-    .day-card:hover{ transform: translateY(-3px); }
+    .card-soft { background:rgba(30,41,59,0.85); border:1px solid rgba(255,255,255,0.1); border-radius:20px; }
+    .day-card { background:rgba(255,255,255,0.04); border-radius:16px; padding:16px; margin:12px 0; }
+    .bottom-nav { position:fixed; bottom:0; left:0; right:0; background:rgba(15,23,42,0.95); padding:12px 16px 28px; display:flex; gap:8px; z-index:1000; }
+    .bn-item { flex:1; padding:12px 8px; border-radius:18px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.12); color:white; font-weight:600; display:flex; flex-direction:column; align-items:center; gap:4px; }
+    .bn-item.active { background:rgba(255,193,7,0.16); border-color:var(--amber); box-shadow:0 0 20px rgba(255,193,7,0.3); }
+    #toast { position:fixed; bottom:120px; left:50%; transform:translateX(-50%); background:rgba(0,0,0,0.9); color:white; padding:16px 28px; border-radius:18px; z-index:2000; display:none; font-size:1.1rem; }
   </style>
 </head>
 <body class="bg-dark">
-  <!-- NAVBAR -->
-  <nav class="navbar navbar-expand-lg navbar-dark bg-black border-bottom border-danger">
-    <div class="container">
-      <a class="navbar-brand fw-bold text-danger" href="#">ShaSitter</a>
-      <div class="d-flex gap-2">
-        <button id="themeBtn" class="btn btn-sm btn-outline-warning">✨ Thème</button>
-        <button id="refreshBtn" class="btn btn-sm btn-outline-light">↻ Refresh</button>
-        <button id="closeBtn" class="btn btn-sm btn-outline-danger">Fermer</button>
-      </div>
+
+  <nav class="navbar navbar-expand-lg navbar-dark bg-black border-bottom border-danger px-3">
+    <a class="navbar-brand fw-bold text-danger" href="#">ShaSitter</a>
+    <div class="ms-auto d-flex gap-2">
+      <button id="refreshBtn" class="btn btn-sm btn-outline-light">↻ Refresh</button>
+      <button id="closeBtn" class="btn btn-sm btn-outline-danger">Fermer</button>
     </div>
   </nav>
 
-  <header class="py-4 bg-black">
-    <div class="container">
-      <div class="p-4 rounded-4 border border-danger text-center">
-        <h1 class="h3 mb-1 text-white">Dashboard ShaSitter</h1>
-        <p class="mb-0 text-secondary">Gestion privée • Tout se fait via Telegram /start</p>
-      </div>
-    </div>
-  </header>
-
-  <main class="py-4 pb-5">
+  <main class="py-4 px-3">
     <div class="container">
 
-      <!-- ===================== ACCUEIL ===================== -->
+      <!-- ACCUEIL -->
       <section id="panelHome" class="panel active">
-        <!-- Message spécial du jour -->
-        <div class="card card-soft mb-4">
-          <div class="card-body text-center py-5">
-            <div style="font-size:23px;font-weight:700;color:#e9d5ff;">💜 Message du jour pour Shana 💜</div>
-            <div id="dailyMessage" class="mt-3 fs-5 fw-light" style="line-height:1.5;color:#f3e8ff;max-width:620px;margin:0 auto;">
-            </div>
-          </div>
+        <div class="card-soft p-4 mb-4 text-center">
+          <h5 class="text-warning mb-3">💜 Message du jour pour Shana 💜</h5>
+          <p id="dailyMessage" class="fs-5 fw-light"></p>
         </div>
 
-        <div class="row g-4">
-          <!-- KPIs globaux -->
-          <div class="col-lg-5">
-            <div class="card card-soft text-white h-100">
-              <div class="card-body">
-                <div class="control-pill mb-4">
-                  <div class="d-flex justify-content-between flex-wrap gap-3 text-center">
-                    <div>
-                      <div class="muted small">TOTAL</div>
-                      <div class="kpi"><span id="kpiTotalAll">—</span> <span class="fs-6">CHF</span></div>
-                    </div>
-                    <div>
-                      <div class="muted small">SHA SITTER</div>
-                      <div class="kpi text-warning"><span id="kpiTotalCompany">—</span> <span class="fs-6">CHF</span></div>
-                    </div>
-                    <div>
-                      <div class="muted small">EMPLOYÉS</div>
-                      <div class="kpi text-danger"><span id="kpiTotalEmployees">—</span> <span class="fs-6">CHF</span></div>
-                    </div>
-                  </div>
-                </div>
+        <div class="row g-3 mb-4">
+          <div class="col-4 text-center"><div class="card-soft p-3"><small class="muted">Total</small><div class="kpi fw-bold fs-4" id="kpiTotalAll">—</div></div></div>
+          <div class="col-4 text-center"><div class="card-soft p-3"><small class="muted">ShaSitter</small><div class="kpi fw-bold fs-4 text-warning" id="kpiTotalCompany">—</div></div></div>
+          <div class="col-4 text-center"><div class="card-soft p-3"><small class="muted">Employés</small><div class="kpi fw-bold fs-4 text-danger" id="kpiTotalEmployees">—</div></div></div>
+        </div>
 
-                <div class="mini">
-                  <div class="fw-bold mb-2">⏰ À venir</div>
-                  <div class="muted">Réservations : <span id="kpiUpcomingCount" class="fw-bold">—</span></div>
-                  <div class="muted">Prochaine : <span id="kpiNextBooking">—</span></div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Réservations à venir groupées -->
-          <div class="col-lg-7">
-            <div class="card card-soft text-white">
-              <div class="card-body">
-                <h2 class="h4 mb-3 d-flex align-items-center gap-2">
-                  📅 Réservations à venir
-                  <span class="badge bg-warning text-dark ms-auto" id="upcomingTotalBadge">0</span>
-                </h2>
-                <div id="upcomingAccordion" class="accordion accordion-flush"></div>
-              </div>
-            </div>
+        <div class="card-soft">
+          <div class="card-body">
+            <h5 class="mb-3">⏰ Réservations à venir</h5>
+            <div id="upcomingAccordion" class="accordion"></div>
           </div>
         </div>
       </section>
 
-      <!-- ===================== CLIENTS ===================== -->
+      <!-- CLIENTS -->
       <section id="panelClients" class="panel">
-        <div class="card card-soft text-white">
-          <div class="card-body">
-            <div class="d-flex align-items-center justify-content-between gap-3 flex-wrap mb-3">
-              <h2 class="h4 mb-0">👤 Clients</h2>
-              <div class="control-pill">
-                <input id="clientsSearch" class="form-control bg-dark text-white border-0" type="search" placeholder="Rechercher…">
-              </div>
-            </div>
-            <div id="clientsList" class="mt-2"></div>
-          </div>
+        <div class="card-soft p-3">
+          <input id="clientsSearch" class="form-control bg-dark text-white mb-3" placeholder="Rechercher client..." type="search">
+          <div id="clientsList"></div>
         </div>
       </section>
 
-      <!-- ===================== PRESTATIONS ===================== -->
+      <!-- PRESTATIONS -->
       <section id="panelPrestations" class="panel">
-        <div class="card card-soft text-white">
-          <div class="card-body">
-            <div class="d-flex gap-3 flex-wrap mb-4">
-              <select id="prestaAnimalFilter" class="form-select bg-dark text-white border-secondary" style="width:180px;">
-                <option value="all">Tous les animaux</option>
-                <option value="chat">🐱 Chats</option>
-                <option value="lapin">🐰 Lapins</option>
-                <option value="autre">🐾 Autres</option>
-              </select>
-              <input id="prestaSearch" class="form-control bg-dark text-white border-secondary flex-grow-1" type="search" placeholder="Nom de la prestation…">
-            </div>
-            <div id="prestationsGrid" class="row g-4"></div>
+        <div class="card-soft p-3">
+          <div class="d-flex gap-2 mb-3">
+            <select id="prestaAnimalFilter" class="form-select bg-dark text-white"><option value="all">Tous les animaux</option><option value="chat">🐱 Chats</option><option value="lapin">🐰 Lapins</option><option value="autre">🐾 Autres</option></select>
+            <input id="prestaSearch" class="form-control bg-dark text-white" placeholder="Nom de la prestation..." type="search">
           </div>
+          <div id="prestationsGrid"></div>
         </div>
       </section>
 
-      <!-- ===================== RÉSERVATIONS ===================== -->
+      <!-- RÉSERVATIONS -->
       <section id="panelBookings" class="panel">
-        <div class="card card-soft text-white mb-4">
-          <div class="card-body">
-            <div class="d-flex flex-wrap gap-3 align-items-end">
-              <div class="flex-grow-1">
-                <label class="form-label small muted">Client</label>
-                <select id="bookingsClientFilter" class="form-select bg-dark text-white border-secondary"></select>
-              </div>
-              <div>
-                <label class="form-label small muted">Du</label>
-                <input id="bookingsFrom" type="date" class="form-control bg-dark text-white border-secondary">
-              </div>
-              <div>
-                <label class="form-label small muted">Au</label>
-                <input id="bookingsTo" type="date" class="form-control bg-dark text-white border-secondary">
-              </div>
-              <button id="bookingsReset" class="btn btn-outline-light">Réinitialiser</button>
-              <button id="bookingsExportAll" class="btn btn-success">📅 Exporter .ics</button>
-            </div>
-          </div>
+        <div class="card-soft p-3 mb-3">
+          <select id="bookingsClientFilter" class="form-select bg-dark text-white mb-3"></select>
         </div>
-
-        <!-- Total client quand sélectionné -->
-        <div id="clientTotalBox" class="card border-warning mb-4" style="display:none;">
-          <div class="card-body py-3">
-            <div class="d-flex justify-content-between align-items-center">
-              <span id="selectedClientName" class="fw-bold fs-5"></span>
-              <span class="text-success fw-bold fs-4" id="clientTotalPaid">0.00 CHF</span>
-            </div>
-            <div class="small text-muted">Total payé toutes réservations</div>
-          </div>
-        </div>
-
-        <div class="row g-4">
-          <div class="col-lg-6">
-            <div class="card card-soft text-white">
-              <div class="card-body">
-                <h4 class="mb-3">⏰ À venir</h4>
-                <div id="bookingsUpcoming" class="list-group list-group-flush"></div>
-              </div>
-            </div>
-          </div>
-          <div class="col-lg-6">
-            <div class="card card-soft text-white">
-              <div class="card-body">
-                <h4 class="mb-3">🧾 Passées</h4>
-                <div id="bookingsPast" class="list-group list-group-flush"></div>
-              </div>
-            </div>
-          </div>
+        <div class="row g-3">
+          <div class="col-6"><div class="card-soft p-3"><h6>⏰ À venir</h6><div id="bookingsUpcoming"></div></div></div>
+          <div class="col-6"><div class="card-soft p-3"><h6>🧾 Passées</h6><div id="bookingsPast"></div></div></div>
         </div>
       </section>
 
-      <!-- ===================== COMPTA ===================== -->
+      <!-- COMPTA -->
       <section id="panelCompta" class="panel">
-        <div class="card card-soft text-white">
-          <div class="card-body">
-            <h2 class="h4 mb-4">💰 Comptabilité Globale</h2>
-            <div class="row g-3">
-              <div class="col-md-4">
-                <div class="mini">
-                  <div class="muted">Total</div>
-                  <div class="kpi"><span id="comptaTotal">—</span> CHF</div>
-                </div>
-              </div>
-              <div class="col-md-4">
-                <div class="mini">
-                  <div class="muted">ShaSitter</div>
-                  <div class="kpi text-warning"><span id="comptaCo">—</span> CHF</div>
-                </div>
-              </div>
-              <div class="col-md-4">
-                <div class="mini">
-                  <div class="muted">Employés</div>
-                  <div class="kpi text-danger"><span id="comptaEmp">—</span> CHF</div>
-                </div>
-              </div>
-            </div>
+        <div class="card-soft p-4 mb-4">
+          <h5 class="mb-3">💰 Comptabilité Globale</h5>
+          <div class="row g-3 text-center">
+            <div class="col-4"><div class="mini"><small>Total</small><div class="fw-bold fs-4" id="comptaTotal">— CHF</div></div></div>
+            <div class="col-4"><div class="mini"><small>ShaSitter</small><div class="fw-bold fs-4 text-warning" id="comptaCo">— CHF</div></div></div>
+            <div class="col-4"><div class="mini"><small>Employés</small><div class="fw-bold fs-4 text-danger" id="comptaEmp">— CHF</div></div></div>
+          </div>
+        </div>
 
-            <hr class="border-secondary my-5">
-
-            <h5 class="mb-3">Détails par client</h5>
-            <select id="comptaClientFilter" class="form-select bg-dark text-white border-secondary mb-4"></select>
-
-            <div id="clientComptaDetails" class="row g-3" style="display:none;">
-              <div class="col-md-4">
-                <div class="mini">
-                  <div class="muted">Total payé</div>
-                  <div class="kpi"><span id="cClientTotal">—</span> CHF</div>
-                </div>
-              </div>
-              <div class="col-md-4">
-                <div class="mini">
-                  <div class="muted">Part ShaSitter</div>
-                  <div class="kpi text-warning"><span id="cClientCo">—</span> CHF</div>
-                </div>
-              </div>
-              <div class="col-md-4">
-                <div class="mini">
-                  <div class="muted">Part employés</div>
-                  <div class="kpi text-danger"><span id="cClientEmp">—</span> CHF</div>
-                </div>
-              </div>
-            </div>
-
-            <div class="row g-4 mt-5">
-              <div class="col-lg-6">
-                <div class="mini">
-                  <div class="fw-bold mb-3">📅 Total par mois</div>
-                  <div id="comptaMonths"></div>
-                </div>
-              </div>
-              <div class="col-lg-6">
-                <div class="mini">
-                  <div class="fw-bold mb-3">🏆 Top clients</div>
-                  <div id="comptaClients"></div>
-                </div>
-                <div class="mini mt-4">
-                  <div class="fw-bold mb-3">🐾 Top prestations</div>
-                  <div id="comptaPrestations"></div>
-                </div>
-              </div>
-            </div>
+        <div class="card-soft p-3">
+          <h6 class="mb-3">Détails par client</h6>
+          <select id="comptaClientFilter" class="form-select bg-dark text-white mb-3"></select>
+          <div id="clientComptaDetails" class="row g-3" style="display:none;">
+            <div class="col-4 text-center"><div class="mini"><small>Total payé</small><div class="fw-bold fs-4" id="cClientTotal">—</div></div></div>
+            <div class="col-4 text-center"><div class="mini"><small>ShaSitter</small><div class="fw-bold fs-4 text-warning" id="cClientCo">—</div></div></div>
+            <div class="col-4 text-center"><div class="mini"><small>Employés</small><div class="fw-bold fs-4 text-danger" id="cClientEmp">—</div></div></div>
           </div>
         </div>
       </section>
     </div>
   </main>
 
-  <footer class="py-4 bg-black border-top border-danger">
-    <div class="container text-center text-secondary">
-      ShaSitter © <span id="year"></span>
-    </div>
-  </footer>
-
-  <!-- Modal édition (inchangé) -->
-  <div class="modal fade" id="modalEditBooking" tabindex="-1">
-    <div class="modal-dialog modal-dialog-centered">
-      <div class="modal-content bg-dark text-white border border-danger">
-        <!-- ... identique à ton ancien modal ... -->
-        <!-- (je ne le recopie pas ici pour gagner de la place, il reste exactement le même) -->
-      </div>
-    </div>
-  </div>
+  <footer class="py-3 text-center text-secondary">ShaSitter © <span id="year"></span></footer>
 
   <div id="toast"></div>
 
-  <!-- Bottom nav -->
-  <nav id="bottomNav" class="bottom-nav">
-    <button id="btnHome" class="bn-item active"><span class="bn-ico">🏠</span><span class="bn-txt">Accueil</span></button>
-    <button id="btnClients" class="bn-item"><span class="bn-ico">👤</span><span class="bn-txt">Clients</span></button>
-    <button id="btnPrestations" class="bn-item"><span class="bn-ico">🐾</span><span class="bn-txt">Prestations</span></button>
-    <button id="btnBookings" class="bn-item"><span class="bn-ico">📅</span><span class="bn-txt">Résas</span></button>
-    <button id="btnCompta" class="bn-item"><span class="bn-ico">💰</span><span class="bn-txt">Compta</span></button>
+  <!-- Bottom Nav -->
+  <nav class="bottom-nav">
+    <button id="btnHome" class="bn-item active"><span>🏠</span><span>Accueil</span></button>
+    <button id="btnClients" class="bn-item"><span>👤</span><span>Clients</span></button>
+    <button id="btnPrestations" class="bn-item"><span>🐾</span><span>Prestas</span></button>
+    <button id="btnBookings" class="bn-item"><span>📅</span><span>Résas</span></button>
+    <button id="btnCompta" class="bn-item"><span>💰</span><span>Compta</span></button>
   </nav>
 
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/js/bootstrap.bundle.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <script src="js/pokedex.js"></script>
 </body>
 </html>
