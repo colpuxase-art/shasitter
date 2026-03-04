@@ -14,20 +14,98 @@
       background: linear-gradient(180deg, #0a0e17, #111827);
       color: #e9ecef;
       min-height: 100vh;
+      font-family: system-ui, sans-serif;
     }
     .panel { display:none; }
     .panel.active { display:block; }
-    .card-soft { background:rgba(30,41,59,0.85); border:1px solid rgba(255,255,255,0.1); border-radius:20px; }
-    .day-card { background:rgba(255,255,255,0.04); border-radius:16px; padding:16px; margin:12px 0; }
-    .bottom-nav { position:fixed; bottom:0; left:0; right:0; background:rgba(15,23,42,0.95); padding:12px 16px 28px; display:flex; gap:8px; z-index:1000; }
-    .bn-item { flex:1; padding:12px 8px; border-radius:18px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.12); color:white; font-weight:600; display:flex; flex-direction:column; align-items:center; gap:4px; }
-    .bn-item.active { background:rgba(255,193,7,0.16); border-color:var(--amber); box-shadow:0 0 20px rgba(255,193,7,0.3); }
-    #toast { position:fixed; bottom:120px; left:50%; transform:translateX(-50%); background:rgba(0,0,0,0.9); color:white; padding:16px 28px; border-radius:18px; z-index:2000; display:none; font-size:1.1rem; }
+
+    .card-soft {
+      background: rgba(30,41,59,0.92);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 20px;
+      padding: 16px;
+    }
+
+    .mini {
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 16px;
+      padding: 14px;
+      text-align: center;
+    }
+
+    .kpi { font-size: 1.85rem; font-weight: 800; }
+
+    .day-card {
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 16px;
+      padding: 16px;
+      margin: 12px 0;
+    }
+
+    .slot-pill {
+      background: rgba(255,193,7,0.2);
+      color: #ffc107;
+      padding: 6px 14px;
+      border-radius: 30px;
+      font-size: 0.95rem;
+      font-weight: 600;
+    }
+
+    .bottom-nav {
+      position: fixed;
+      bottom: 0; left: 0; right: 0;
+      background: rgba(15,23,42,0.97);
+      padding: 14px 16px 30px;
+      display: flex;
+      gap: 8px;
+      z-index: 1000;
+    }
+
+    .bn-item {
+      flex: 1;
+      padding: 12px 8px;
+      border-radius: 18px;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.13);
+      color: white;
+      font-weight: 600;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .bn-item.active {
+      background: rgba(255,193,7,0.18);
+      border-color: var(--amber);
+      box-shadow: 0 0 22px rgba(255,193,7,0.4);
+    }
+
+    #toast {
+      position: fixed;
+      bottom: 120px; left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0,0,0,0.92);
+      color: white;
+      padding: 16px 28px;
+      border-radius: 18px;
+      z-index: 2000;
+      display: none;
+      font-size: 1.12rem;
+    }
+
+    .accordion-button {
+      background: rgba(255,255,255,0.07) !important;
+      color: white !important;
+      border-radius: 16px !important;
+    }
   </style>
 </head>
 <body class="bg-dark">
 
-  <nav class="navbar navbar-expand-lg navbar-dark bg-black border-bottom border-danger px-3">
+  <nav class="navbar navbar-expand-lg navbar-dark bg-black border-bottom border-danger px-3 py-2">
     <a class="navbar-brand fw-bold text-danger" href="#">ShaSitter</a>
     <div class="ms-auto d-flex gap-2">
       <button id="refreshBtn" class="btn btn-sm btn-outline-light">↻ Refresh</button>
@@ -46,9 +124,9 @@
         </div>
 
         <div class="row g-3 mb-4">
-          <div class="col-4 text-center"><div class="card-soft p-3"><small class="muted">Total</small><div class="kpi fw-bold fs-4" id="kpiTotalAll">—</div></div></div>
-          <div class="col-4 text-center"><div class="card-soft p-3"><small class="muted">ShaSitter</small><div class="kpi fw-bold fs-4 text-warning" id="kpiTotalCompany">—</div></div></div>
-          <div class="col-4 text-center"><div class="card-soft p-3"><small class="muted">Employés</small><div class="kpi fw-bold fs-4 text-danger" id="kpiTotalEmployees">—</div></div></div>
+          <div class="col-4 text-center"><div class="mini"><small class="muted">Total</small><div class="kpi" id="kpiTotalAll">—</div></div></div>
+          <div class="col-4 text-center"><div class="mini"><small class="muted">ShaSitter</small><div class="kpi text-warning" id="kpiTotalCompany">—</div></div></div>
+          <div class="col-4 text-center"><div class="mini"><small class="muted">Employés</small><div class="kpi text-danger" id="kpiTotalEmployees">—</div></div></div>
         </div>
 
         <div class="card-soft">
@@ -71,7 +149,12 @@
       <section id="panelPrestations" class="panel">
         <div class="card-soft p-3">
           <div class="d-flex gap-2 mb-3">
-            <select id="prestaAnimalFilter" class="form-select bg-dark text-white"><option value="all">Tous les animaux</option><option value="chat">🐱 Chats</option><option value="lapin">🐰 Lapins</option><option value="autre">🐾 Autres</option></select>
+            <select id="prestaAnimalFilter" class="form-select bg-dark text-white">
+              <option value="all">Tous les animaux</option>
+              <option value="chat">🐱 Chats</option>
+              <option value="lapin">🐰 Lapins</option>
+              <option value="autre">🐾 Autres</option>
+            </select>
             <input id="prestaSearch" class="form-control bg-dark text-white" placeholder="Nom de la prestation..." type="search">
           </div>
           <div id="prestationsGrid"></div>
@@ -94,9 +177,9 @@
         <div class="card-soft p-4 mb-4">
           <h5 class="mb-3">💰 Comptabilité Globale</h5>
           <div class="row g-3 text-center">
-            <div class="col-4"><div class="mini"><small>Total</small><div class="fw-bold fs-4" id="comptaTotal">— CHF</div></div></div>
-            <div class="col-4"><div class="mini"><small>ShaSitter</small><div class="fw-bold fs-4 text-warning" id="comptaCo">— CHF</div></div></div>
-            <div class="col-4"><div class="mini"><small>Employés</small><div class="fw-bold fs-4 text-danger" id="comptaEmp">— CHF</div></div></div>
+            <div class="col-4"><div class="mini"><small class="muted">Total</small><div class="kpi" id="comptaTotal">—</div></div></div>
+            <div class="col-4"><div class="mini"><small class="muted">ShaSitter</small><div class="kpi text-warning" id="comptaCo">—</div></div></div>
+            <div class="col-4"><div class="mini"><small class="muted">Employés</small><div class="kpi text-danger" id="comptaEmp">—</div></div></div>
           </div>
         </div>
 
@@ -104,9 +187,9 @@
           <h6 class="mb-3">Détails par client</h6>
           <select id="comptaClientFilter" class="form-select bg-dark text-white mb-3"></select>
           <div id="clientComptaDetails" class="row g-3" style="display:none;">
-            <div class="col-4 text-center"><div class="mini"><small>Total payé</small><div class="fw-bold fs-4" id="cClientTotal">—</div></div></div>
-            <div class="col-4 text-center"><div class="mini"><small>ShaSitter</small><div class="fw-bold fs-4 text-warning" id="cClientCo">—</div></div></div>
-            <div class="col-4 text-center"><div class="mini"><small>Employés</small><div class="fw-bold fs-4 text-danger" id="cClientEmp">—</div></div></div>
+            <div class="col-4 text-center"><div class="mini"><small>Total payé</small><div class="kpi" id="cClientTotal">—</div></div></div>
+            <div class="col-4 text-center"><div class="mini"><small>ShaSitter</small><div class="kpi text-warning" id="cClientCo">—</div></div></div>
+            <div class="col-4 text-center"><div class="mini"><small>Employés</small><div class="kpi text-danger" id="cClientEmp">—</div></div></div>
           </div>
         </div>
       </section>
@@ -117,7 +200,6 @@
 
   <div id="toast"></div>
 
-  <!-- Bottom Nav -->
   <nav class="bottom-nav">
     <button id="btnHome" class="bn-item active"><span>🏠</span><span>Accueil</span></button>
     <button id="btnClients" class="bn-item"><span>👤</span><span>Clients</span></button>
