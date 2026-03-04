@@ -63,7 +63,7 @@
     if (name === 'compta') renderCompta();
   }
 
-  // ===================== ACCUEIL =====================
+  // ===================== ACCUEIL (texte plus lisible) =====================
   function renderHome() {
     $('#dailyMessage').textContent = getDailyMessage();
 
@@ -73,8 +73,6 @@
     $('#kpiTotalEmployees').textContent = money(c.totalEmployees ?? c.totalEmp ?? 0);
 
     const up = state.upcoming || [];
-
-    // Group by day
     const grouped = {};
     up.forEach(b => {
       const d = b.start_date || '0000-00-00';
@@ -101,14 +99,16 @@
                     <div style="font-size:3.2rem;flex-shrink:0;">
                       ${b.pets?.animal_type === 'chat' ? '🐱' : b.pets?.animal_type === 'lapin' ? '🐰' : '🐾'}
                     </div>
-                    <div class="flex-grow-1">
+                    <div class="flex-grow-1 min-w-0">
                       <div class="fw-bold fs-5">${b.clients?.name || '—'}</div>
                       <div class="fw-semibold">${b.prestations?.name || '—'}</div>
-                      <div class="small text-secondary">
-                        ${b.slot === 'matin' ? '🌅 Matin' : b.slot === 'soir' ? '🌙 Soir' : '🌅🌙 Matin + soir'} • 
-                        ${b.start_date}${b.start_date !== b.end_date ? ` → ${b.end_date}` : ''}
+                      <div class="mt-2 d-flex flex-wrap gap-2">
+                        <span class="slot-pill">
+                          ${b.slot === 'matin' ? '🌅 Matin' : b.slot === 'soir' ? '🌙 Soir' : '🌅🌙 Matin + soir'}
+                        </span>
+                        <span class="text-secondary">${b.start_date}${b.start_date !== b.end_date ? ` → ${b.end_date}` : ''}</span>
                       </div>
-                      ${b.pets?.name ? `<div class="small text-muted">🐾 ${b.pets.name}</div>` : ''}
+                      ${b.pets?.name ? `<div class="small text-muted mt-1">🐾 ${b.pets.name}</div>` : ''}
                     </div>
                   </div>
                 </div>
@@ -140,7 +140,6 @@
     const animalFilter = $('#prestaAnimalFilter')?.value || 'all';
 
     let filtered = state.prestations.filter(p => p.active !== false);
-
     if (animalFilter !== 'all') filtered = filtered.filter(p => p.animal_type === animalFilter);
     if (q) filtered = filtered.filter(p => p.name.toLowerCase().includes(q));
 
@@ -166,7 +165,6 @@
   function renderBookings() {
     const cid = $('#bookingsClientFilter')?.value || 'all';
     let list = [...state.upcoming, ...state.past];
-
     if (cid !== 'all') list = list.filter(b => String(b.client_id) === cid);
 
     const upcoming = list.filter(b => b.end_date >= todayISO());
@@ -193,36 +191,39 @@
       </div>`;
   }
 
-  // ===================== COMPTA =====================
+  // ===================== COMPTA (fix sélection client) =====================
   function renderCompta() {
     const c = state.compta || {};
     $('#comptaTotal').textContent = money(c.totalAll ?? c.total ?? 0);
     $('#comptaCo').textContent = money(c.totalCompany ?? c.totalCo ?? 0);
     $('#comptaEmp').textContent = money(c.totalEmployees ?? c.totalEmp ?? 0);
 
-    // Client filter
     const sel = $('#comptaClientFilter');
     if (sel) {
       sel.innerHTML = `<option value="all">Tous les clients</option>` +
         state.clients.map(cl => `<option value="${cl.id}">${cl.name}</option>`).join('');
     }
 
-    // When a client is selected
-    const cid = $('#comptaClientFilter').value;
-    const detailsBox = $('#clientComptaDetails');
-    if (cid && cid !== 'all') {
-      const all = [...state.upcoming, ...state.past];
-      const clientBookings = all.filter(b => String(b.client_id) === cid);
-      const total = clientBookings.reduce((sum, b) => sum + Number(b.total_chf || 0), 0);
-      const co = clientBookings.reduce((sum, b) => sum + Number(b.company_part_chf || 0), 0);
-      const emp = clientBookings.reduce((sum, b) => sum + Number(b.employee_part_chf || 0), 0);
+    // Mise à jour immédiate quand on change le client
+    if (sel) {
+      sel.onchange = () => {
+        const cid = sel.value;
+        const detailsBox = $('#clientComptaDetails');
+        if (cid && cid !== 'all') {
+          const all = [...state.upcoming, ...state.past];
+          const bs = all.filter(b => String(b.client_id) === cid);
+          const total = bs.reduce((s,b)=>s+Number(b.total_chf||0),0);
+          const co = bs.reduce((s,b)=>s+Number(b.company_part_chf||0),0);
+          const emp = bs.reduce((s,b)=>s+Number(b.employee_part_chf||0),0);
 
-      $('#cClientTotal').textContent = money(total);
-      $('#cClientCo').textContent = money(co);
-      $('#cClientEmp').textContent = money(emp);
-      detailsBox.style.display = 'flex';
-    } else {
-      detailsBox.style.display = 'none';
+          $('#cClientTotal').textContent = money(total);
+          $('#cClientCo').textContent = money(co);
+          $('#cClientEmp').textContent = money(emp);
+          detailsBox.style.display = 'flex';
+        } else {
+          detailsBox.style.display = 'none';
+        }
+      };
     }
   }
 
@@ -238,12 +239,10 @@
     $('#prestaSearch')?.addEventListener('input', renderPrestations);
     $('#prestaAnimalFilter')?.addEventListener('change', renderPrestations);
     $('#bookingsClientFilter')?.addEventListener('change', renderBookings);
-    $('#comptaClientFilter')?.addEventListener('change', renderCompta);
 
     $('#refreshBtn').onclick = loadAll;
     $('#closeBtn').onclick = () => window.Telegram?.WebApp?.close?.();
 
-    // Disable vertical swipe (Telegram mobile)
     if (window.Telegram?.WebApp) window.Telegram.WebApp.disableVerticalSwipes?.();
   }
 
@@ -263,14 +262,14 @@
       state.past = past || [];
       state.compta = compta || {};
 
-      // Populate client filters
+      // Populate selects
       const bc = $('#bookingsClientFilter');
       if (bc) bc.innerHTML = `<option value="all">Tous les clients</option>` + state.clients.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
 
       const cc = $('#comptaClientFilter');
       if (cc) cc.innerHTML = `<option value="all">Tous les clients</option>` + state.clients.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
 
-      // Render current panel
+      // Render current panel + force compta update
       if (state.activePanel === 'home') renderHome();
       if (state.activePanel === 'clients') renderClients();
       if (state.activePanel === 'prestations') renderPrestations();
