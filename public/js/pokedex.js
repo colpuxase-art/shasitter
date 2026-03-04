@@ -2,6 +2,7 @@
   'use strict';
 
   const $  = (sel, root = document) => root.querySelector(sel);
+  const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
   const state = {
     clients:     [],
@@ -15,6 +16,7 @@
   const money = n => (Math.round(Number(n || 0) * 100) / 100).toFixed(2);
   const todayISO = () => new Date().toISOString().slice(0, 10);
 
+  // Messages du jour pour Shana
   const dailyMessages = [
     "Shana, ta douceur transforme chaque visite en moment magique 🐾✨",
     "Aujourd’hui, les animaux t’attendent avec impatience ! Tu es leur préférée 💖",
@@ -46,12 +48,12 @@
 
   function setPanel(name) {
     state.activePanel = name;
-    document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
-    const panel = document.getElementById('panel' + name[0].toUpperCase() + name.slice(1));
+    $$('.panel').forEach(p => p.classList.remove('active'));
+    const panel = $('#panel' + name[0].toUpperCase() + name.slice(1));
     if (panel) panel.classList.add('active');
 
-    document.querySelectorAll('.bn-item').forEach(b => b.classList.remove('active'));
-    const btn = document.getElementById('btn' + name[0].toUpperCase() + name.slice(1));
+    $$('.bn-item').forEach(b => b.classList.remove('active'));
+    const btn = $('#btn' + name[0].toUpperCase() + name.slice(1));
     if (btn) btn.classList.add('active');
 
     if (name === 'home') renderHome();
@@ -61,7 +63,7 @@
     if (name === 'compta') renderCompta();
   }
 
-  // ===================== ACCUEIL (fond sombre + pastilles lisibles) =====================
+  // ===================== ACCUEIL (texte plus lisible) =====================
   function renderHome() {
     $('#dailyMessage').textContent = getDailyMessage();
 
@@ -97,11 +99,13 @@
                     <div style="font-size:3.2rem;flex-shrink:0;">
                       ${b.pets?.animal_type === 'chat' ? '🐱' : b.pets?.animal_type === 'lapin' ? '🐰' : '🐾'}
                     </div>
-                    <div class="flex-grow-1">
+                    <div class="flex-grow-1 min-w-0">
                       <div class="fw-bold fs-5">${b.clients?.name || '—'}</div>
                       <div class="fw-semibold">${b.prestations?.name || '—'}</div>
-                      <div class="d-flex gap-2 mt-2">
-                        <span class="slot-pill">${b.slot === 'matin' ? '🌅 Matin' : b.slot === 'soir' ? '🌙 Soir' : '🌅🌙 Matin + soir'}</span>
+                      <div class="mt-2 d-flex flex-wrap gap-2">
+                        <span class="slot-pill">
+                          ${b.slot === 'matin' ? '🌅 Matin' : b.slot === 'soir' ? '🌙 Soir' : '🌅🌙 Matin + soir'}
+                        </span>
                         <span class="text-secondary">${b.start_date}${b.start_date !== b.end_date ? ` → ${b.end_date}` : ''}</span>
                       </div>
                       ${b.pets?.name ? `<div class="small text-muted mt-1">🐾 ${b.pets.name}</div>` : ''}
@@ -117,7 +121,77 @@
     $('#upcomingAccordion').innerHTML = html || `<div class="text-center py-5 text-secondary">Aucune réservation à venir</div>`;
   }
 
-  // ===================== COMPTA (fix détail client) =====================
+  // ===================== CLIENTS =====================
+  function renderClients() {
+    const q = ($('#clientsSearch')?.value || '').trim().toLowerCase();
+    const list = state.clients.filter(c => !q || c.name.toLowerCase().includes(q));
+
+    $('#clientsList').innerHTML = list.map(c => `
+      <div class="card-soft p-3 mb-3">
+        <div class="fw-bold fs-5">👤 ${c.name}</div>
+        <div class="small text-secondary">${c.phone ? '📞 ' + c.phone : ''} ${c.address ? '📍 ' + c.address : ''}</div>
+      </div>
+    `).join('') || `<div class="text-center py-5 text-secondary">Aucun client trouvé</div>`;
+  }
+
+  // ===================== PRESTATIONS =====================
+  function renderPrestations() {
+    const q = ($('#prestaSearch')?.value || '').trim().toLowerCase();
+    const animalFilter = $('#prestaAnimalFilter')?.value || 'all';
+
+    let filtered = state.prestations.filter(p => p.active !== false);
+    if (animalFilter !== 'all') filtered = filtered.filter(p => p.animal_type === animalFilter);
+    if (q) filtered = filtered.filter(p => p.name.toLowerCase().includes(q));
+
+    $('#prestationsGrid').innerHTML = filtered.map(p => `
+      <div class="card-soft p-3 mb-3">
+        <div class="d-flex justify-content-between align-items-start">
+          <div>
+            <div class="fw-bold fs-5">${p.name}</div>
+            <div class="small text-secondary">${p.animal_type ? animalLabel(p.animal_type) : ''} • ${p.category || ''}</div>
+          </div>
+          <div class="text-end fw-bold fs-5">${money(p.price_chf)} CHF</div>
+        </div>
+        ${p.description ? `<div class="small text-muted mt-2">${p.description}</div>` : ''}
+      </div>
+    `).join('') || `<div class="text-center py-5 text-secondary">Aucune prestation</div>`;
+  }
+
+  function animalLabel(a) {
+    return a === 'chat' ? '🐱 Chat' : a === 'lapin' ? '🐰 Lapin' : '🐾 Autre';
+  }
+
+  // ===================== RÉSERVATIONS =====================
+  function renderBookings() {
+    const cid = $('#bookingsClientFilter')?.value || 'all';
+    let list = [...state.upcoming, ...state.past];
+    if (cid !== 'all') list = list.filter(b => String(b.client_id) === cid);
+
+    const upcoming = list.filter(b => b.end_date >= todayISO());
+    const past = list.filter(b => b.end_date < todayISO());
+
+    $('#bookingsUpcoming').innerHTML = upcoming.map(bookingItem).join('') || '<div class="text-center py-4 text-secondary">Rien à venir</div>';
+    $('#bookingsPast').innerHTML = past.map(bookingItem).join('') || '<div class="text-center py-4 text-secondary">Aucune passée</div>';
+  }
+
+  function bookingItem(b) {
+    return `
+      <div class="card-soft p-3 mb-3">
+        <div class="d-flex justify-content-between">
+          <div>
+            <div class="fw-bold">${b.clients?.name || '—'} <span class="text-secondary">#${b.id}</span></div>
+            <div class="small">${b.prestations?.name || '—'}</div>
+            <div class="small text-secondary">
+              ${b.slot === 'matin' ? '🌅' : b.slot === 'soir' ? '🌙' : '🌅🌙'} • ${b.start_date} → ${b.end_date}
+            </div>
+            ${b.pets?.name ? `<div class="small text-muted">🐾 ${b.pets.name}</div>` : ''}
+          </div>
+          <div class="text-end fw-bold">${money(b.total_chf)} CHF</div>
+        </div>
+      </div>`;
+  }
+
+  // ===================== COMPTA (fix sélection client) =====================
   function renderCompta() {
     const c = state.compta || {};
     $('#comptaTotal').textContent = money(c.totalAll ?? c.total ?? 0);
@@ -130,32 +204,30 @@
         state.clients.map(cl => `<option value="${cl.id}">${cl.name}</option>`).join('');
     }
 
-    // IMPORTANT : mise à jour quand on choisit un client
-    if (sel) sel.onchange = () => {
-      const cid = sel.value;
-      const box = $('#clientComptaDetails');
-      if (cid && cid !== 'all') {
-        const all = [...state.upcoming, ...state.past];
-        const bs = all.filter(b => String(b.client_id) === cid);
-        const total = bs.reduce((s,b)=>s+Number(b.total_chf||0),0);
-        const co = bs.reduce((s,b)=>s+Number(b.company_part_chf||0),0);
-        const emp = bs.reduce((s,b)=>s+Number(b.employee_part_chf||0),0);
+    // Mise à jour immédiate quand on change le client
+    if (sel) {
+      sel.onchange = () => {
+        const cid = sel.value;
+        const detailsBox = $('#clientComptaDetails');
+        if (cid && cid !== 'all') {
+          const all = [...state.upcoming, ...state.past];
+          const bs = all.filter(b => String(b.client_id) === cid);
+          const total = bs.reduce((s,b)=>s+Number(b.total_chf||0),0);
+          const co = bs.reduce((s,b)=>s+Number(b.company_part_chf||0),0);
+          const emp = bs.reduce((s,b)=>s+Number(b.employee_part_chf||0),0);
 
-        $('#cClientTotal').textContent = money(total);
-        $('#cClientCo').textContent = money(co);
-        $('#cClientEmp').textContent = money(emp);
-        box.style.display = 'flex';
-      } else {
-        box.style.display = 'none';
-      }
-    };
+          $('#cClientTotal').textContent = money(total);
+          $('#cClientCo').textContent = money(co);
+          $('#cClientEmp').textContent = money(emp);
+          detailsBox.style.display = 'flex';
+        } else {
+          detailsBox.style.display = 'none';
+        }
+      };
+    }
   }
 
-  // Les autres fonctions restent identiques à ton code (clients, prestations, bookings)
-  function renderClients() { /* ton code */ }
-  function renderPrestations() { /* ton code */ }
-  function renderBookings() { /* ton code */ }
-
+  // ===================== EVENTS =====================
   function wireEvents() {
     $('#btnHome').onclick = () => setPanel('home');
     $('#btnClients').onclick = () => setPanel('clients');
@@ -163,8 +235,15 @@
     $('#btnBookings').onclick = () => setPanel('bookings');
     $('#btnCompta').onclick = () => setPanel('compta');
 
+    $('#clientsSearch')?.addEventListener('input', renderClients);
+    $('#prestaSearch')?.addEventListener('input', renderPrestations);
+    $('#prestaAnimalFilter')?.addEventListener('change', renderPrestations);
+    $('#bookingsClientFilter')?.addEventListener('change', renderBookings);
+
     $('#refreshBtn').onclick = loadAll;
     $('#closeBtn').onclick = () => window.Telegram?.WebApp?.close?.();
+
+    if (window.Telegram?.WebApp) window.Telegram.WebApp.disableVerticalSwipes?.();
   }
 
   async function loadAll() {
@@ -183,18 +262,24 @@
       state.past = past || [];
       state.compta = compta || {};
 
+      // Populate selects
       const bc = $('#bookingsClientFilter');
       if (bc) bc.innerHTML = `<option value="all">Tous les clients</option>` + state.clients.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
 
       const cc = $('#comptaClientFilter');
       if (cc) cc.innerHTML = `<option value="all">Tous les clients</option>` + state.clients.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
 
+      // Render current panel + force compta update
       if (state.activePanel === 'home') renderHome();
+      if (state.activePanel === 'clients') renderClients();
+      if (state.activePanel === 'prestations') renderPrestations();
+      if (state.activePanel === 'bookings') renderBookings();
       if (state.activePanel === 'compta') renderCompta();
 
       $('#year').textContent = new Date().getFullYear();
     } catch (e) {
-      toast('❌ Erreur de chargement');
+      console.error(e);
+      toast('❌ Erreur de chargement : ' + (e.message || e));
     }
   }
 
