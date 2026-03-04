@@ -15,15 +15,14 @@
   };
 
   const money = (n) => (Math.round((Number(n || 0)) * 100) / 100).toFixed(2);
-  const todayISO = () => {
-    const d = new Date();
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    return `${y}-${m}-${day}`;
-  };
+  const todayISO = () => new Date().toISOString().slice(0, 10);
 
-  const slotLabel = (s) => (s === 'matin' ? '🌅 Matin' : s === 'soir' ? '🌙 Soir' : '🌅🌙 Matin+soir');
+  const slotLabel = (s) => {
+    if (s === 'matin') return '🌅 Matin';
+    if (s === 'soir') return '🌙 Soir';
+    if (s === 'matin_soir') return '🌅🌙 Matin+soir';
+    return s || '—';
+  };
 
   async function fetchJSON(url, opts = {}) {
     const res = await fetch(url, {
@@ -43,7 +42,7 @@
     el.textContent = msg;
     el.style.display = 'block';
     clearTimeout(toast._t);
-    toast._t = setTimeout(() => (el.style.display = 'none'), 2200);
+    toast._t = setTimeout(() => (el.style.display = 'none'), 2800);
   }
 
   function setPanel(name) {
@@ -57,7 +56,6 @@
     const btn = $('#btn' + name[0].toUpperCase() + name.slice(1));
     if (btn) btn.classList.add('active');
 
-    // Render on-demand so each onglet se met à jour
     if (name === 'home') renderHome();
     if (name === 'clients') renderClients();
     if (name === 'prestations') renderPrestations();
@@ -65,61 +63,120 @@
     if (name === 'compta') renderCompta();
   }
 
-  function bookingItem(b) {
-    const client = b.clients?.name || '—';
-    const pet = b.pets?.name ? `🐾 ${b.pets.name}` : '🐾 —';
-    const presta = b.prestations?.name || '—';
-    const emp = b.employees?.name ? ` · 👩‍💼 ${b.employees.name}` : '';
+  // ────────────────────────────────────────────────
+  //   AFFICHAGE GROUPÉ PAR JOUR (nouveau style cartes)
+  // ────────────────────────────────────────────────
+  function renderGroupedReservations(containerId, bookings, isPast = false) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
 
-    const range = b.start_date === b.end_date ? b.start_date : `${b.start_date} → ${b.end_date}`;
+    container.innerHTML = '';
 
-    return `
-      <button type="button" class="list-group-item list-group-item-action text-white" data-booking-id="${b.id}">
-        <div class="d-flex justify-content-between align-items-start gap-3">
-          <div>
-            <div class="fw-bold">${client} <span class="text-secondary">#${b.id}</span></div>
-            <div class="small text-secondary">${pet} · ${presta}${emp}</div>
-            <div class="small text-secondary">${slotLabel(b.slot)} · ${range}${b.days_count ? ` · ${b.days_count} jour(s)` : ''}</div>
+    if (!bookings || bookings.length === 0) {
+      container.innerHTML = `<div class="text-center text-muted py-4">Aucune réservation</div>`;
+      return;
+    }
+
+    // Grouper par date de début
+    const groups = {};
+    bookings.forEach(b => {
+      const key = b.start_date || '0000-00-00';
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(b);
+    });
+
+    const sortedDates = Object.keys(groups).sort();
+
+    sortedDates.forEach(dateKey => {
+      const group = groups[dateKey];
+
+      // Label jour humain
+      let label = dateKey;
+      const d = new Date(dateKey);
+      const today = new Date();
+      today.setHours(0,0,0,0);
+      const diffDays = Math.round((d - today) / (1000 * 60 * 60 * 24));
+
+      if (!isPast) {
+        if (diffDays === 1) label = 'Demain';
+        else if (diffDays === 2) label = 'Après-demain';
+        else if (diffDays > 2 && diffDays <= 7) label = `Dans ${diffDays} jours`;
+        else label = d.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' });
+      } else {
+        if (diffDays === 0) label = 'Aujourd’hui';
+        else if (diffDays === -1) label = 'Hier';
+        else label = d.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' });
+      }
+
+      const header = document.createElement('div');
+      header.className = 'day-header';
+      header.textContent = label.charAt(0).toUpperCase() + label.slice(1);
+      container.appendChild(header);
+
+      group.forEach(b => {
+        const client = b.clients?.name || 'Client inconnu';
+        const pet = b.pets?.name || '';
+        const animalType = b.prestations?.animal_type || pet || '';
+        const emoji = getAnimalEmoji(animalType);
+        const presta = b.prestations?.name || '—';
+        const slot = slotLabel(b.slot);
+        const range = b.start_date === b.end_date 
+          ? b.start_date 
+          : `${b.start_date} → ${b.end_date}`;
+        const price = money(b.total_chf ?? b.total_override ?? 0);
+
+        const card = document.createElement('div');
+        card.className = `res-card ${isPast ? 'res-past' : ''}`;
+        card.setAttribute('data-booking-id', b.id);
+        card.innerHTML = `
+          <div class="res-icon">${emoji}</div>
+          <div class="res-main">
+            <div class="res-client">${client}</div>
+            <div class="res-subtitle">${presta} · ${slot}</div>
+            ${pet ? `<div class="res-subtitle small">${pet}</div>` : ''}
+            <div class="res-slot-badge">${range}</div>
           </div>
-          <div class="fw-bold">${money(b.total_chf)} CHF</div>
-        </div>
-      </button>
-    `;
+          <div class="res-price">${price} CHF</div>
+        `;
+        container.appendChild(card);
+      });
+    });
+  }
+
+  function getAnimalEmoji(text = '') {
+    const t = text.toLowerCase();
+    if (t.includes('chat')) return '🐱';
+    if (t.includes('chien')) return '🐶';
+    if (t.includes('lapin')) return '🐰';
+    if (t.includes('oiseau') || t.includes('perroquet')) return '🐦';
+    if (t.includes('rongeur') || t.includes('hamster')) return '🐹';
+    return '🐾';
   }
 
   function renderHome() {
     const up = state.upcoming || [];
     const past = state.past || [];
 
-    const elUpCount = $('#kpiUpcomingCount');
-    const elPastCount = $('#kpiPastCount');
-    const elNext = $('#kpiNextBooking');
-
-    if (elUpCount) elUpCount.textContent = String(up.length);
-    if (elPastCount) elPastCount.textContent = String(past.length);
+    $('#kpiUpcomingCount').textContent = String(up.length);
+    $('#kpiPastCount').textContent = String(past.length);
 
     const next = up[0];
-    if (elNext) elNext.textContent = next ? `${next.start_date} · ${next.clients?.name || ''} · ${next.prestations?.name || ''}` : '—';
+    $('#kpiNextBooking').textContent = next 
+      ? `${next.start_date} · ${next.clients?.name || ''} · ${next.prestations?.name || ''}`
+      : '—';
 
     if (state.compta) {
-      // On accepte plusieurs clés possibles (selon ton backend)
       const totalAll = state.compta.totalAll ?? state.compta.total_all ?? state.compta.total ?? 0;
       const totalEmp = state.compta.totalEmp ?? state.compta.totalEmployees ?? state.compta.total_employee ?? 0;
       const totalCo = state.compta.totalCo ?? state.compta.totalCompany ?? state.compta.total_company ?? 0;
 
-      const a = $('#kpiTotalAll');
-      const e = $('#kpiTotalEmployees');
-      const c = $('#kpiTotalCompany');
-      if (a) a.textContent = money(totalAll);
-      if (e) e.textContent = money(totalEmp);
-      if (c) c.textContent = money(totalCo);
+      $('#kpiTotalAll').textContent = money(totalAll);
+      $('#kpiTotalEmployees').textContent = money(totalEmp);
+      $('#kpiTotalCompany').textContent = money(totalCo);
     }
 
-    const upList = $('#upcomingList');
-    const pastList = $('#pastList');
-
-    if (upList) upList.innerHTML = up.slice(0, 8).map(bookingItem).join('') || `<div class="text-secondary small py-2">Aucune réservation à venir.</div>`;
-    if (pastList) pastList.innerHTML = past.slice(0, 8).map(bookingItem).join('') || `<div class="text-secondary small py-2">Aucune réservation passée.</div>`;
+    renderGroupedReservations('upcomingList', up);
+    renderGroupedReservations('pastList', past, true);
   }
 
   function renderClients() {
@@ -196,9 +253,9 @@
     let all = [...(state.upcoming || []), ...(state.past || [])];
     all.sort((a, b) => (a.start_date || '').localeCompare(b.start_date || '') || (a.id - b.id));
 
-    if (clientId) all = all.filter((b) => String(b.client_id) === String(clientId));
-    if (from) all = all.filter((b) => (b.end_date || '') >= from);
-    if (to) all = all.filter((b) => (b.start_date || '') <= to);
+    if (clientId && clientId !== 'all') all = all.filter((b) => String(b.client_id) === String(clientId));
+    if (from) all = all.filter((b) => (b.end_date || b.start_date || '9999-99-99') >= from);
+    if (to) all = all.filter((b) => (b.start_date || '0000-00-00') <= to);
 
     return all;
   }
@@ -207,49 +264,39 @@
     const list = getBookingsFiltered();
     const t = todayISO();
 
-    const up = list.filter((b) => (b.end_date || '') >= t);
-    const past = list.filter((b) => (b.end_date || '') < t);
+    const up = list.filter((b) => (b.end_date || b.start_date || '9999-99-99') >= t);
+    const past = list.filter((b) => (b.end_date || b.start_date || '0000-00-00') < t);
 
-    const upEl = $('#bookingsUpcoming');
-    const pastEl = $('#bookingsPast');
-
-    if (upEl) upEl.innerHTML = up.map(bookingItem).join('') || `<div class="text-secondary small py-2">Rien à venir.</div>`;
-    if (pastEl) pastEl.innerHTML = past.map(bookingItem).join('') || `<div class="text-secondary small py-2">Rien en historique.</div>`;
+    renderGroupedReservations('bookingsUpcoming', up);
+    renderGroupedReservations('bookingsPast', past, true);
   }
 
+  // ────────────────────────────────────────────────
+  //   EXPORT ICS AMÉLIORÉ
+  // ────────────────────────────────────────────────
   function icsEscape(s) {
-  return String(s ?? "")
-    .replace(/\\/g, "\\\\")
-    .replace(/\n/g, "\\n")
-    .replace(/,/g, "\\,")
-    .replace(/;/g, "\\;");
-}
+    return String(s ?? "")
+      .replace(/\\/g, "\\\\")
+      .replace(/\n/g, "\\n")
+      .replace(/,/g, "\\,")
+      .replace(/;/g, "\\;");
+  }
 
-  function download(filename, content, mime) {
-  const blob = new Blob([content], { type: mime || "application/octet-stream" });
-  const url = URL.createObjectURL(blob);
-
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-
-  setTimeout(() => {
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  }, 0);
-}
   function buildICS(bookings) {
     const now = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
     const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//ShaSitter//Reservations//FR', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH'];
 
     for (const b of bookings) {
-      const uid = `booking-${b.id}@shasitter`;
-      const dtStart = (b.start_date || '').replace(/-/g, '') + 'T090000Z';
-      const dtEnd = (b.end_date || b.start_date || '').replace(/-/g, '') + 'T100000Z';
+      const uid = `booking-${b.id}@shasitter-${Date.now()}`;
+      const dtStart = (b.start_date || '').replace(/-/g, '') + 'T080000Z';
+      const dtEnd = (b.end_date || b.start_date || '').replace(/-/g, '') + 'T200000Z';
       const summary = `${b.clients?.name || 'Client'} — ${b.prestations?.name || 'Prestation'} (${slotLabel(b.slot)})`;
-      const desc = `Client: ${b.clients?.name || ''}\nAnimal: ${b.pets?.name || ''}\nTotal: ${money(b.total_chf)} CHF\nNotes: ${b.notes || ''}`;
+      const desc = [
+        `Client: ${b.clients?.name || ''}`,
+        `Animal: ${b.pets?.name || ''}`,
+        `Total: ${money(b.total_chf ?? 0)} CHF`,
+        b.notes ? `Notes: ${b.notes}` : ''
+      ].filter(Boolean).join('\\n');
 
       lines.push(
         'BEGIN:VEVENT',
@@ -265,6 +312,20 @@
 
     lines.push('END:VCALENDAR');
     return lines.join('\r\n');
+  }
+
+  function download(filename, content, mime = 'text/calendar;charset=utf-8') {
+    const blob = new Blob([content], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 100);
   }
 
   function renderCompta() {
@@ -332,17 +393,21 @@
     const modalEl = $('#modalEditBooking');
     if (!modalEl) return;
 
-    const b = await fetchJSON(`/api/bookings/${id}`);
+    let b;
+    try {
+      b = await fetchJSON(`/api/bookings/${id}`);
+    } catch (err) {
+      toast('Impossible de charger la réservation');
+      return;
+    }
 
-    // Remplir fields
     $('#ebId').textContent = String(b.id);
     $('#ebPrestation').value = b.prestation_id ?? '';
     $('#ebStart').value = b.start_date || '';
     $('#ebEnd').value = b.end_date || '';
     $('#ebSlot').value = b.slot || 'matin';
-    $('#ebTotalOverride').value = b.total_chf ?? '';
+    $('#ebTotalOverride').value = b.total_chf ?? b.total_override ?? '';
 
-    // Bootstrap modal
     if (!state.bsModal) state.bsModal = new bootstrap.Modal(modalEl);
     state.bsModal.show();
   }
@@ -353,16 +418,20 @@
 
     const payload = {
       prestation_id: Number($('#ebPrestation')?.value || 0) || null,
-      start_date: $('#ebStart')?.value,
-      end_date: $('#ebEnd')?.value,
-      slot: $('#ebSlot')?.value,
+      start_date: $('#ebStart')?.value || null,
+      end_date: $('#ebEnd')?.value || null,
+      slot: $('#ebSlot')?.value || null,
       total_override: $('#ebTotalOverride')?.value ? Number($('#ebTotalOverride').value) : null,
     };
 
-    await fetchJSON(`/api/bookings/${id}`, { method: 'PUT', body: JSON.stringify(payload) });
-    state.bsModal?.hide();
-    toast('✅ Réservation mise à jour.');
-    await loadAll();
+    try {
+      await fetchJSON(`/api/bookings/${id}`, { method: 'PUT', body: JSON.stringify(payload) });
+      state.bsModal?.hide();
+      toast('✅ Réservation mise à jour.');
+      await loadAll();
+    } catch (err) {
+      toast('Erreur lors de la sauvegarde : ' + err.message);
+    }
   }
 
   async function deleteBooking() {
@@ -370,21 +439,25 @@
     if (!Number.isFinite(id)) return;
     if (!confirm('Supprimer cette réservation ?')) return;
 
-    await fetchJSON(`/api/bookings/${id}`, { method: 'DELETE' });
-    state.bsModal?.hide();
-    toast('🗑️ Réservation supprimée.');
-    await loadAll();
+    try {
+      await fetchJSON(`/api/bookings/${id}`, { method: 'DELETE' });
+      state.bsModal?.hide();
+      toast('🗑️ Réservation supprimée.');
+      await loadAll();
+    } catch (err) {
+      toast('Erreur suppression : ' + err.message);
+    }
   }
 
   function wireEvents() {
-    // nav
+    // Navigation
     $('#btnHome')?.addEventListener('click', () => setPanel('home'));
     $('#btnClients')?.addEventListener('click', () => setPanel('clients'));
     $('#btnPrestations')?.addEventListener('click', () => setPanel('prestations'));
     $('#btnBookings')?.addEventListener('click', () => setPanel('bookings'));
     $('#btnCompta')?.addEventListener('click', () => setPanel('compta'));
 
-    // Search / filters
+    // Recherche / filtres
     $('#clientsSearch')?.addEventListener('input', renderClients);
     $('#clientsClear')?.addEventListener('click', () => {
       $('#clientsSearch').value = '';
@@ -408,30 +481,23 @@
       renderBookingsPanel();
     });
 
+    // Export ICS
     $('#bookingsExportAll')?.addEventListener('click', () => {
       const list = getBookingsFiltered();
-if (!list.length) return toast('Rien à exporter.');
+      if (!list.length) return toast('Rien à exporter.');
 
-let ics = buildICS(list);
-
-// IMPORTANT: normaliser en CRLF (format ICS standard)
-ics = ics.replace(/\r?\n/g, "\r\n");
-
-// IMPORTANT: forcer UTF-8 (BOM)
-download('shasitter-reservations.ics', "\uFEFF" + ics, 'text/calendar;charset=utf-8');
-
-toast('📅 Export .ics généré.');
+      const ics = buildICS(list);
+      download('shasitter-reservations.ics', ics, 'text/calendar;charset=utf-8');
+      toast('📅 Fichier .ics généré');
     });
 
     $('#refreshBtn')?.addEventListener('click', loadAll);
 
-    // Theme (simple toggle)
     $('#themeBtn')?.addEventListener('click', () => {
       document.body.classList.toggle('bg-dark');
       toast('✨ Thème basculé.');
     });
 
-    // Telegram close
     $('#closeBtn')?.addEventListener('click', () => {
       try {
         if (window.Telegram?.WebApp) window.Telegram.WebApp.close();
@@ -441,11 +507,11 @@ toast('📅 Export .ics généré.');
       }
     });
 
-    // modal actions
+    // Modal
     $('#ebSave')?.addEventListener('click', () => saveEditBooking().catch((e) => toast(e.message)));
     $('#ebDelete')?.addEventListener('click', () => deleteBooking().catch((e) => toast(e.message)));
 
-    // click booking to edit (home + bookings)
+    // Ouvrir édition sur clic réservation
     document.body.addEventListener('click', (e) => {
       const el = e.target?.closest?.('[data-booking-id]');
       if (!el) return;
@@ -471,19 +537,21 @@ toast('📅 Export .ics généré.');
       state.past = (past || []).sort((a, b) => (b.start_date || '').localeCompare(a.start_date || '') || (b.id - a.id));
       state.compta = compta || null;
 
-      // Fill booking filter dropdown
+      // Remplir filtre clients
       const sel = $('#bookingsClientFilter');
       if (sel) {
-        sel.innerHTML = `<option value="">Tous les clients</option>` + state.clients.map((c) => `<option value="${c.id}">${c.name} (#${c.id})</option>`).join('');
+        sel.innerHTML = `<option value="">Tous les clients</option>` + 
+          state.clients.map((c) => `<option value="${c.id}">${c.name} (#${c.id})</option>`).join('');
       }
 
-      // Fill prestation select in modal
+      // Remplir select prestation modal
       const ps = $('#ebPrestation');
       if (ps) {
-        ps.innerHTML = `<option value="">—</option>` + state.prestations.filter((p) => p.active !== false).map((p) => `<option value="${p.id}">${p.name} (#${p.id})</option>`).join('');
+        ps.innerHTML = `<option value="">—</option>` + 
+          state.prestations.filter((p) => p.active !== false).map((p) => `<option value="${p.id}">${p.name} (#${p.id})</option>`).join('');
       }
 
-      // Render current panel
+      // Rendu selon onglet actif
       renderHome();
       if (state.activePanel === 'clients') renderClients();
       if (state.activePanel === 'prestations') renderPrestations();
