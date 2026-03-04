@@ -214,6 +214,72 @@
       align-self: flex-start;
       margin-top: 4px;
     }
+
+    /* Accordion pour les jours */
+.day-header {
+  cursor: pointer;
+  user-select: none;
+  position: relative;
+  padding-right: 40px !important;
+  background: rgba(255,221,87,0.08);
+  border-radius: 10px 10px 0 0;
+  padding: 12px 16px;
+  margin: 20px 0 0 0;
+}
+
+.day-header::after {
+  content: '▼';
+  position: absolute;
+  right: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+  transition: transform 0.25s;
+  font-size: 0.9rem;
+  color: #ffdd57;
+}
+
+.day-header.collapsed::after {
+  transform: translateY(-50%) rotate(-90deg);
+}
+
+.reservation-day-group {
+  overflow: hidden;
+  transition: max-height 0.4s ease-out, opacity 0.3s;
+  max-height: 3000px;
+  opacity: 1;
+  background: rgba(0,0,0,0.3);
+  border-radius: 0 0 10px 10px;
+  padding: 0 12px 12px 12px;
+}
+
+.reservation-day-group.collapsed {
+  max-height: 0;
+  opacity: 0;
+  padding: 0;
+}
+
+/* Vue détail client */
+#clientDetailPanel {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.92);
+  z-index: 10000;
+  overflow-y: auto;
+  padding: 70px 16px 100px;
+  backdrop-filter: blur(8px);
+}
+
+.client-detail-header {
+  background: rgba(255,193,7,0.15);
+  border-radius: 14px;
+  padding: 16px;
+  margin-bottom: 20px;
+}
+
+.client-resa-list .res-card {
+  margin-bottom: 12px;
+}
   </style>
 </head>
 
@@ -421,7 +487,19 @@
 
     </div>
   </main>
+<div id="clientDetailPanel">
+  <div class="container">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+      <h3 id="clientDetailName" class="mb-0"></h3>
+      <button id="closeClientDetail" class="btn btn-outline-danger">× Fermer</button>
+    </div>
 
+    <div id="clientStats" class="client-detail-header"></div>
+
+    <h4 class="mb-3 mt-4">Réservations de ce client</h4>
+    <div id="clientResaList" class="client-resa-list reservation-groups"></div>
+  </div>
+</div>
   <footer class="py-4 bg-black border-top border-danger">
     <div class="container text-center text-secondary">
       ShaSitter © <span id="year"></span>
