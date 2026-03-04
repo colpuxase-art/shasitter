@@ -1,0 +1,13 @@
+{
+  "name": "shasitter-bot",
+  "version": "1.0.0",
+  "main": "index.cjs",
+  "scripts": {
+    "start": "node index.cjs"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "node-telegram-bot-api": "^0.66.0",
+    "@supabase/supabase-js": "^2.45.4"
+  }
+}
