@@ -156,6 +156,7 @@
       </section>
 
       <!-- COMPTA -->
+<!-- ===================== COMPTA ===================== -->
 <section id="panelCompta" class="panel">
   <div class="card-soft p-4 mb-4">
     <h5 class="mb-3">💰 Comptabilité Globale</h5>
@@ -170,18 +171,15 @@
     <h6 class="mb-3">Détails par client</h6>
     <select id="comptaClientFilter" class="form-select bg-dark text-white mb-3"></select>
 
-    <!-- Les 3 totaux du client -->
-    <div id="clientComptaDetails" class="row g-3" style="display:none;">
+    <!-- Totaux du client sélectionné -->
+    <div id="clientComptaDetails" class="row g-3 mt-3" style="display:none;">
       <div class="col-4 text-center"><div class="mini"><small class="muted">Total payé</small><div class="kpi" id="cClientTotal">—</div></div></div>
       <div class="col-4 text-center"><div class="mini"><small class="muted">ShaSitter</small><div class="kpi text-warning" id="cClientCo">—</div></div></div>
       <div class="col-4 text-center"><div class="mini"><small class="muted">Employés</small><div class="kpi text-danger" id="cClientEmp">—</div></div></div>
     </div>
 
-    <!-- NOUVEAU : Liste des réservations du client -->
-    <div id="clientBookingsList" class="mt-4" style="display:none;">
-      <h6 class="mb-2">📋 Ses réservations</h6>
-      <div id="clientBookingsItems" class="list-group"></div>
-    </div>
+    <!-- Accordion des réservations du client (comme Accueil) -->
+    <div id="clientBookingsAccordion" class="mt-4 accordion" style="display:none;"></div>
   </div>
 </section>
     </div>
