@@ -9,99 +9,82 @@
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
 
   <style>
-    :root { --amber: #ffc107; --red: #dc3545; }
-    body.bg-dark {
-      background: linear-gradient(180deg, #0a0e17, #111827);
-      color: #e9ecef;
-      min-height: 100vh;
-      font-family: system-ui, sans-serif;
-    }
-    .panel { display:none; }
-    .panel.active { display:block; }
+  :root { --amber: #ffc107; --red: #dc3545; }
+  body.bg-dark {
+    background: linear-gradient(180deg, #0a0e17, #111827);
+    color: #e9ecef;
+    min-height: 100vh;
+    font-family: system-ui, sans-serif;
+  }
+  .panel { display:none; }
+  .panel.active { display:block; }
 
-    .card-soft {
-      background: rgba(30,41,59,0.92);
-      border: 1px solid rgba(255,255,255,0.1);
-      border-radius: 20px;
-      padding: 16px;
-    }
+  .card-soft {
+    background: rgba(30,41,59,0.92);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 20px;
+  }
 
-    .mini {
-      background: rgba(255,255,255,0.06);
-      border: 1px solid rgba(255,255,255,0.12);
-      border-radius: 16px;
-      padding: 14px;
-      text-align: center;
-    }
+  .mini {
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 16px;
+    padding: 12px 8px;
+    text-align: center;
+  }
 
-    .kpi { font-size: 1.85rem; font-weight: 800; }
+  /* ←←← ICI LA CORRECTION PRINCIPALE */
+  .kpi {
+    font-size: 1.38rem !important;   /* plus petit pour que ça rentre */
+    font-weight: 800;
+    line-height: 1.1;
+    letter-spacing: -0.03em;
+  }
 
-    .day-card {
-      background: rgba(255,255,255,0.06);
-      border: 1px solid rgba(255,255,255,0.12);
-      border-radius: 16px;
-      padding: 16px;
-      margin: 12px 0;
-    }
+  .day-card {
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 16px;
+    padding: 16px;
+    margin: 12px 0;
+  }
 
-    .slot-pill {
-      background: rgba(255,193,7,0.2);
-      color: #ffc107;
-      padding: 6px 14px;
-      border-radius: 30px;
-      font-size: 0.95rem;
-      font-weight: 600;
-    }
+  .slot-pill {
+    background: rgba(255,193,7,0.2);
+    color: #ffc107;
+    padding: 6px 14px;
+    border-radius: 30px;
+    font-size: 0.95rem;
+    font-weight: 600;
+  }
 
-    .bottom-nav {
-      position: fixed;
-      bottom: 0; left: 0; right: 0;
-      background: rgba(15,23,42,0.97);
-      padding: 14px 16px 30px;
-      display: flex;
-      gap: 8px;
-      z-index: 1000;
-    }
+  .bottom-nav {
+    position: fixed; bottom: 0; left: 0; right: 0;
+    background: rgba(15,23,42,0.97);
+    padding: 14px 16px 30px;
+    display: flex; gap: 8px; z-index: 1000;
+  }
 
-    .bn-item {
-      flex: 1;
-      padding: 12px 8px;
-      border-radius: 18px;
-      background: rgba(255,255,255,0.05);
-      border: 1px solid rgba(255,255,255,0.13);
-      color: white;
-      font-weight: 600;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 4px;
-    }
+  .bn-item {
+    flex: 1; padding: 12px 8px; border-radius: 18px;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.13);
+    color: white; font-weight: 600;
+    display: flex; flex-direction: column; align-items: center; gap: 4px;
+  }
 
-    .bn-item.active {
-      background: rgba(255,193,7,0.18);
-      border-color: var(--amber);
-      box-shadow: 0 0 22px rgba(255,193,7,0.4);
-    }
+  .bn-item.active {
+    background: rgba(255,193,7,0.18);
+    border-color: var(--amber);
+    box-shadow: 0 0 22px rgba(255,193,7,0.4);
+  }
 
-    #toast {
-      position: fixed;
-      bottom: 120px; left: 50%;
-      transform: translateX(-50%);
-      background: rgba(0,0,0,0.92);
-      color: white;
-      padding: 16px 28px;
-      border-radius: 18px;
-      z-index: 2000;
-      display: none;
-      font-size: 1.12rem;
-    }
-
-    .accordion-button {
-      background: rgba(255,255,255,0.07) !important;
-      color: white !important;
-      border-radius: 16px !important;
-    }
-  </style>
+  #toast {
+    position: fixed; bottom: 120px; left: 50%; transform: translateX(-50%);
+    background: rgba(0,0,0,0.92); color: white; padding: 16px 28px;
+    border-radius: 18px; z-index: 2000; display: none; font-size: 1.12rem;
+  }
+</style>
 </head>
 <body class="bg-dark">
 
