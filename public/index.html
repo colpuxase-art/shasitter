@@ -147,25 +147,27 @@
       <!-- ===================== RÉSERVATIONS ===================== -->
 <section id="panelBookings" class="panel">
   <div class="card-soft p-3 mb-4">
-    <div class="d-flex flex-wrap gap-2 align-items-end">
+    <div class="d-flex align-items-end gap-3">
       <div class="flex-grow-1">
         <select id="bookingsClientFilter" class="form-select bg-dark text-white"></select>
       </div>
-      <button id="bookingsExportAll" class="btn btn-success">📅 Exporter .ics</button>
+      <button id="bookingsExportAll" class="btn btn-success px-4">
+        📅 Exporter .ics
+      </button>
     </div>
   </div>
 
   <div class="row g-3">
     <div class="col-6">
       <div class="card-soft p-3">
-        <h6 class="mb-3">⏰ À venir</h6>
-        <div id="bookingsUpcoming" class="list-group"></div>
+        <h6 class="mb-3 text-success">⏰ À venir</h6>
+        <div id="bookingsUpcoming"></div>
       </div>
     </div>
     <div class="col-6">
       <div class="card-soft p-3">
-        <h6 class="mb-3">🧾 Passées</h6>
-        <div id="bookingsPast" class="list-group"></div>
+        <h6 class="mb-3 text-secondary">🧾 Passées</h6>
+        <div id="bookingsPast"></div>
       </div>
     </div>
   </div>
