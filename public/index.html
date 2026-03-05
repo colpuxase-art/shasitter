@@ -144,17 +144,32 @@
         </div>
       </section>
 
-      <!-- RÉSERVATIONS -->
-      <section id="panelBookings" class="panel">
-        <div class="card-soft p-3 mb-3">
-          <select id="bookingsClientFilter" class="form-select bg-dark text-white mb-3"></select>
-        </div>
-        <div class="row g-3">
-          <div class="col-6"><div class="card-soft p-3"><h6>⏰ À venir</h6><div id="bookingsUpcoming"></div></div></div>
-          <div class="col-6"><div class="card-soft p-3"><h6>🧾 Passées</h6><div id="bookingsPast"></div></div></div>
-        </div>
-      </section>
+      <!-- ===================== RÉSERVATIONS ===================== -->
+<section id="panelBookings" class="panel">
+  <div class="card-soft p-3 mb-4">
+    <div class="d-flex flex-wrap gap-2 align-items-end">
+      <div class="flex-grow-1">
+        <select id="bookingsClientFilter" class="form-select bg-dark text-white"></select>
+      </div>
+      <button id="bookingsExportAll" class="btn btn-success">📅 Exporter .ics</button>
+    </div>
+  </div>
 
+  <div class="row g-3">
+    <div class="col-6">
+      <div class="card-soft p-3">
+        <h6 class="mb-3">⏰ À venir</h6>
+        <div id="bookingsUpcoming" class="list-group"></div>
+      </div>
+    </div>
+    <div class="col-6">
+      <div class="card-soft p-3">
+        <h6 class="mb-3">🧾 Passées</h6>
+        <div id="bookingsPast" class="list-group"></div>
+      </div>
+    </div>
+  </div>
+</section>
       <!-- ===================== COMPTA ===================== -->
 <section id="panelCompta" class="panel">
   <div class="card-soft p-4 mb-4">
