@@ -161,35 +161,44 @@
     return a === 'chat' ? '🐱 Chat' : a === 'lapin' ? '🐰 Lapin' : '🐾 Autre';
   }
 
-  // ===================== RÉSERVATIONS =====================
-  function renderBookings() {
-    const cid = $('#bookingsClientFilter')?.value || 'all';
-    let list = [...state.upcoming, ...state.past];
-    if (cid !== 'all') list = list.filter(b => String(b.client_id) === cid);
+  // ===================== RÉSERVATIONS (beau + export) =====================
+function renderBookings() {
+  const cid = $('#bookingsClientFilter')?.value || 'all';
+  let list = [...state.upcoming, ...state.past];
 
-    const upcoming = list.filter(b => b.end_date >= todayISO());
-    const past = list.filter(b => b.end_date < todayISO());
+  if (cid !== 'all') list = list.filter(b => String(b.client_id) === cid);
 
-    $('#bookingsUpcoming').innerHTML = upcoming.map(bookingItem).join('') || '<div class="text-center py-4 text-secondary">Rien à venir</div>';
-    $('#bookingsPast').innerHTML = past.map(bookingItem).join('') || '<div class="text-center py-4 text-secondary">Aucune passée</div>';
-  }
+  const upcoming = list.filter(b => b.end_date >= todayISO());
+  const past = list.filter(b => b.end_date < todayISO());
 
-  function bookingItem(b) {
-    return `
-      <div class="card-soft p-3 mb-3">
-        <div class="d-flex justify-content-between">
-          <div>
-            <div class="fw-bold">${b.clients?.name || '—'} <span class="text-secondary">#${b.id}</span></div>
-            <div class="small">${b.prestations?.name || '—'}</div>
-            <div class="small text-secondary">
-              ${b.slot === 'matin' ? '🌅' : b.slot === 'soir' ? '🌙' : '🌅🌙'} • ${b.start_date} → ${b.end_date}
-            </div>
-            ${b.pets?.name ? `<div class="small text-muted">🐾 ${b.pets.name}</div>` : ''}
+  $('#bookingsUpcoming').innerHTML = upcoming.map(bookingItem).join('') || 
+    '<div class="text-center py-5 text-secondary">Aucune réservation à venir</div>';
+
+  $('#bookingsPast').innerHTML = past.map(bookingItem).join('') || 
+    '<div class="text-center py-5 text-secondary">Aucune réservation passée</div>';
+}
+
+function bookingItem(b) {
+  const animalEmoji = b.pets?.animal_type === 'chat' ? '🐱' : 
+                      b.pets?.animal_type === 'lapin' ? '🐰' : '🐾';
+
+  return `
+    <div class="card-soft p-3 mb-3" data-booking-id="${b.id}" style="cursor:pointer;">
+      <div class="d-flex gap-3">
+        <div style="font-size:3.2rem; flex-shrink:0;">${animalEmoji}</div>
+        <div class="flex-grow-1">
+          <div class="fw-bold fs-5">${b.clients?.name || '—'}</div>
+          <div class="fw-semibold">${b.prestations?.name || '—'}</div>
+          <div class="d-flex gap-2 mt-2">
+            <span class="slot-pill">${b.slot === 'matin' ? '🌅 Matin' : b.slot === 'soir' ? '🌙 Soir' : '🌅🌙 Matin + soir'}</span>
+            <span class="text-secondary">${b.start_date} → ${b.end_date}</span>
           </div>
-          <div class="text-end fw-bold">${money(b.total_chf)} CHF</div>
+          ${b.pets?.name ? `<div class="small text-muted mt-1">🐾 ${b.pets.name}</div>` : ''}
         </div>
-      </div>`;
-  }
+        <div class="text-end fw-bold fs-5">${money(b.total_chf)} CHF</div>
+      </div>
+    </div>`;
+}
 
   // ===================== COMPTA - Groupé par Prestation =====================
 function renderCompta() {
