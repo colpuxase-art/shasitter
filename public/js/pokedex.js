@@ -161,7 +161,7 @@
     return a === 'chat' ? '🐱 Chat' : a === 'lapin' ? '🐰 Lapin' : '🐾 Autre';
   }
 
-  // ===================== RÉSERVATIONS (beau + export) =====================
+  // ===================== RÉSERVATIONS (beau + export qui marche) =====================
 function renderBookings() {
   const cid = $('#bookingsClientFilter')?.value || 'all';
   let list = [...state.upcoming, ...state.past];
@@ -185,11 +185,11 @@ function bookingItem(b) {
   return `
     <div class="card-soft p-3 mb-3" data-booking-id="${b.id}" style="cursor:pointer;">
       <div class="d-flex gap-3">
-        <div style="font-size:3.2rem; flex-shrink:0;">${animalEmoji}</div>
+        <div style="font-size:3.2rem;flex-shrink:0;">${animalEmoji}</div>
         <div class="flex-grow-1">
           <div class="fw-bold fs-5">${b.clients?.name || '—'}</div>
           <div class="fw-semibold">${b.prestations?.name || '—'}</div>
-          <div class="d-flex gap-2 mt-2">
+          <div class="d-flex gap-2 mt-2 flex-wrap">
             <span class="slot-pill">${b.slot === 'matin' ? '🌅 Matin' : b.slot === 'soir' ? '🌙 Soir' : '🌅🌙 Matin + soir'}</span>
             <span class="text-secondary">${b.start_date} → ${b.end_date}</span>
           </div>
@@ -199,7 +199,6 @@ function bookingItem(b) {
       </div>
     </div>`;
 }
-
   // ===================== COMPTA - Groupé par Prestation =====================
 function renderCompta() {
   const c = state.compta || {};
