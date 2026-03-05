@@ -169,21 +169,17 @@
   <div class="card-soft p-3">
     <h6 class="mb-3">Détails par client</h6>
     
-    <!-- Menu Client -->
     <select id="comptaClientFilter" class="form-select bg-dark text-white mb-3"></select>
-    
-    <!-- Menu Mois avec total à côté -->
-    <select id="comptaMonthFilter" class="form-select bg-dark text-white mb-3"></select>
 
     <!-- Totaux du client -->
-    <div id="clientComptaDetails" class="row g-3" style="display:none;">
+    <div id="clientComptaDetails" class="row g-3 mt-3" style="display:none;">
       <div class="col-4 text-center"><div class="mini"><small class="muted">Total payé</small><div class="kpi" id="cClientTotal">—</div></div></div>
       <div class="col-4 text-center"><div class="mini"><small class="muted">ShaSitter</small><div class="kpi text-warning" id="cClientCo">—</div></div></div>
       <div class="col-4 text-center"><div class="mini"><small class="muted">Employés</small><div class="kpi text-danger" id="cClientEmp">—</div></div></div>
     </div>
 
-    <!-- Accordion des réservations du mois sélectionné -->
-    <div id="clientBookingsAccordion" class="mt-4 accordion" style="display:none;"></div>
+    <!-- Liste groupée par Prestation -->
+    <div id="clientBookingsByPresta" class="mt-4" style="display:none;"></div>
   </div>
 </section>
     </div>
