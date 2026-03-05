@@ -199,6 +199,65 @@ function bookingItem(b) {
       </div>
     </div>`;
 }
+
+// ===================== EXPORT .ICS (qui marche sur iPhone) =====================
+$('#bookingsExportAll').onclick = () => {
+  const cid = $('#bookingsClientFilter')?.value || 'all';
+  let list = [...state.upcoming, ...state.past];
+
+  if (cid !== 'all') list = list.filter(b => String(b.client_id) === cid);
+
+  if (!list.length) {
+    toast('Aucune réservation à exporter');
+    return;
+  }
+
+  const ics = buildICS(list);
+  const base64 = btoa(unescape(encodeURIComponent(ics)));
+  const dataUrl = `data:text/calendar;charset=utf-8;base64,${base64}`;
+
+  if (window.Telegram?.WebApp) {
+    window.Telegram.WebApp.openLink(dataUrl);
+    toast('📅 Ouverture dans Calendrier...');
+  } else {
+    const a = document.createElement('a');
+    a.href = dataUrl;
+    a.download = 'shasitter-reservations.ics';
+    a.click();
+  }
+};
+
+function buildICS(bookings) {
+  const now = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
+  let ics = [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//ShaSitter//Reservations//FR',
+    'CALSCALE:GREGORIAN',
+    'METHOD:PUBLISH'
+  ];
+
+  bookings.forEach(b => {
+    const uid = `booking-${b.id}@shasitter`;
+    const dtStart = (b.start_date || '').replace(/-/g, '') + 'T090000Z';
+    const dtEnd = (b.end_date || b.start_date || '').replace(/-/g, '') + 'T100000Z';
+    const summary = `${b.clients?.name || 'Client'} - ${b.prestations?.name || 'Prestation'}`;
+
+    ics.push(
+      'BEGIN:VEVENT',
+      `UID:${uid}`,
+      `DTSTAMP:${now}`,
+      `DTSTART:${dtStart}`,
+      `DTEND:${dtEnd}`,
+      `SUMMARY:${summary}`,
+      `DESCRIPTION:Client: ${b.clients?.name || ''}\\nAnimal: ${b.pets?.name || ''}\\nTotal: ${money(b.total_chf)} CHF`,
+      'END:VEVENT'
+    );
+  });
+
+  ics.push('END:VCALENDAR');
+  return ics.join('\r\n');
+}
   // ===================== COMPTA - Groupé par Prestation =====================
 function renderCompta() {
   const c = state.compta || {};
