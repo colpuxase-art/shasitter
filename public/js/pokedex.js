@@ -191,7 +191,6 @@
       </div>`;
   }
 
-  // ===================== COMPTA (fix sélection client) =====================
   // ===================== COMPTA =====================
 function renderCompta() {
   const c = state.compta || {};
@@ -199,23 +198,26 @@ function renderCompta() {
   $('#comptaCo').textContent = money(c.totalCompany ?? c.totalCo ?? 0);
   $('#comptaEmp').textContent = money(c.totalEmployees ?? c.totalEmp ?? 0);
 
-  const sel = $('#comptaClientFilter');
-  if (sel) {
-    sel.innerHTML = `<option value="all">Tous les clients</option>` +
+  const clientSel = $('#comptaClientFilter');
+  const monthSel = $('#comptaMonthFilter');
+
+  // Remplir clients
+  if (clientSel) {
+    clientSel.innerHTML = `<option value="all">Tous les clients</option>` +
       state.clients.map(cl => `<option value="${cl.id}">${cl.name}</option>`).join('');
   }
 
   // Quand on change de client
-  sel.onchange = () => {
-    const cid = sel.value;
-    const totalsBox = $('#clientComptaDetails');
+  clientSel.onchange = () => {
+    const cid = clientSel.value;
+    const detailsBox = $('#clientComptaDetails');
     const accordionBox = $('#clientBookingsAccordion');
 
     if (cid && cid !== 'all') {
       const all = [...state.upcoming, ...state.past];
       const clientBookings = all.filter(b => String(b.client_id) === cid);
 
-      // Calcul des totaux
+      // Calcul totaux client
       const total = clientBookings.reduce((s,b)=>s+Number(b.total_chf||0),0);
       const co = clientBookings.reduce((s,b)=>s+Number(b.company_part_chf||0),0);
       const emp = clientBookings.reduce((s,b)=>s+Number(b.employee_part_chf||0),0);
@@ -224,60 +226,99 @@ function renderCompta() {
       $('#cClientCo').textContent = money(co);
       $('#cClientEmp').textContent = money(emp);
 
-      totalsBox.style.display = 'flex';
+      detailsBox.style.display = 'flex';
       accordionBox.style.display = 'block';
 
-      // Group by date (comme Accueil)
-      const grouped = {};
+      // Remplir le menu Mois avec total par mois
+      const byMonth = {};
       clientBookings.forEach(b => {
-        const d = b.start_date || '0000-00-00';
-        if (!grouped[d]) grouped[d] = [];
-        grouped[d].push(b);
+        const monthKey = b.start_date.slice(0,7); // "2026-02"
+        if (!byMonth[monthKey]) byMonth[monthKey] = [];
+        byMonth[monthKey].push(b);
       });
 
-      const days = Object.keys(grouped).sort();
-      let html = '';
-      days.forEach((day, i) => {
-        const items = grouped[day];
-        html += `
-          <div class="accordion-item">
-            <h2 class="accordion-header">
-              <button class="accordion-button ${i===0?'':'collapsed'}" type="button" data-bs-toggle="collapse" data-bs-target="#clientDay${day.replace(/-/g,'')}">
-                📅 ${day} <span class="badge bg-warning text-dark ms-3">${items.length}</span>
-              </button>
-            </h2>
-            <div id="clientDay${day.replace(/-/g,'')}" class="accordion-collapse collapse ${i===0?'show':''}">
-              <div class="accordion-body p-2">
-                ${items.map(b => `
-                  <div class="day-card p-3 mb-3">
-                    <div class="d-flex gap-3 align-items-start">
-                      <div style="font-size:3rem;">${b.pets?.animal_type==='chat'?'🐱':b.pets?.animal_type==='lapin'?'🐰':'🐾'}</div>
-                      <div class="flex-grow-1">
-                        <div class="fw-bold">${b.prestations?.name || '—'}</div>
-                        <div class="slot-pill d-inline-block mt-1">
-                          ${b.slot === 'matin' ? '🌅 Matin' : b.slot === 'soir' ? '🌙 Soir' : '🌅🌙 Matin + soir'}
-                        </div>
-                        <div class="small text-secondary mt-1">${b.start_date} → ${b.end_date}</div>
-                        ${b.pets?.name ? `<div class="small text-muted">🐾 ${b.pets.name}</div>` : ''}
-                        <div class="mt-2 fw-bold text-end">${money(b.total_chf)} CHF</div>
-                      </div>
-                    </div>
-                  </div>
-                `).join('')}
-              </div>
-            </div>
-          </div>`;
+      let monthHTML = `<option value="all">Tous les mois</option>`;
+      Object.keys(byMonth).sort().forEach(key => {
+        const totalMonth = byMonth[key].reduce((s,b)=>s+Number(b.total_chf||0),0);
+        const [year, monthNum] = key.split('-');
+        const monthName = new Date(year, monthNum-1).toLocaleString('fr-FR', { month: 'long' });
+        monthHTML += `<option value="${key}">${monthName} ${year} (${money(totalMonth)} CHF)</option>`;
       });
 
-      accordionBox.innerHTML = html || `<div class="text-center py-4 text-secondary">Aucune réservation pour ce client</div>`;
+      monthSel.innerHTML = monthHTML;
+
+      // Afficher toutes les réservations du client au départ
+      renderClientBookings(clientBookings);
 
     } else {
-      totalsBox.style.display = 'none';
+      detailsBox.style.display = 'none';
       accordionBox.style.display = 'none';
+      monthSel.innerHTML = `<option value="all">Tous les mois</option>`;
     }
+  };
+
+  // Quand on change de mois
+  monthSel.onchange = () => {
+    const cid = clientSel.value;
+    if (!cid || cid === 'all') return;
+
+    const all = [...state.upcoming, ...state.past];
+    let filtered = all.filter(b => String(b.client_id) === cid);
+
+    const selectedMonth = monthSel.value;
+    if (selectedMonth !== 'all') {
+      filtered = filtered.filter(b => b.start_date.startsWith(selectedMonth));
+    }
+
+    renderClientBookings(filtered);
   };
 }
 
+// Fonction qui affiche l'accordion
+function renderClientBookings(bookings) {
+  const grouped = {};
+  bookings.forEach(b => {
+    const d = b.start_date || '0000-00-00';
+    if (!grouped[d]) grouped[d] = [];
+    grouped[d].push(b);
+  });
+
+  const days = Object.keys(grouped).sort();
+  let html = '';
+  days.forEach((day, i) => {
+    const items = grouped[day];
+    html += `
+      <div class="accordion-item">
+        <h2 class="accordion-header">
+          <button class="accordion-button ${i===0?'':'collapsed'}" type="button" data-bs-toggle="collapse" data-bs-target="#cDay${day.replace(/-/g,'')}">
+            📅 ${day} <span class="badge bg-warning text-dark ms-3">${items.length}</span>
+          </button>
+        </h2>
+        <div id="cDay${day.replace(/-/g,'')}" class="accordion-collapse collapse ${i===0?'show':''}">
+          <div class="accordion-body p-2">
+            ${items.map(b => `
+              <div class="day-card p-3 mb-3">
+                <div class="d-flex gap-3 align-items-start">
+                  <div style="font-size:3.2rem;">${b.pets?.animal_type==='chat'?'🐱':b.pets?.animal_type==='lapin'?'🐰':'🐾'}</div>
+                  <div class="flex-grow-1">
+                    <div class="fw-bold">${b.prestations?.name || '—'}</div>
+                    <div class="d-flex gap-2 mt-2">
+                      <span class="slot-pill">${b.slot==='matin'?'🌅 Matin':b.slot==='soir'?'🌙 Soir':'🌅🌙 Matin+soir'}</span>
+                      <span class="text-secondary">${b.start_date} → ${b.end_date}</span>
+                    </div>
+                    ${b.pets?.name ? `<div class="small text-muted mt-1">🐾 ${b.pets.name}</div>` : ''}
+                    <div class="mt-2 fw-bold text-end">${money(b.total_chf)} CHF</div>
+                  </div>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      </div>`;
+  });
+
+  $('#clientBookingsAccordion').innerHTML = html || `<div class="text-center py-4 text-secondary">Aucune réservation pour cette période</div>`;
+}
   // ===================== EVENTS =====================
   function wireEvents() {
     $('#btnHome').onclick = () => setPanel('home');
