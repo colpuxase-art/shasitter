@@ -205,50 +205,75 @@ function renderCompta() {
       state.clients.map(cl => `<option value="${cl.id}">${cl.name}</option>`).join('');
   }
 
-  // Quand on sélectionne un client
+  // Quand on change de client
   sel.onchange = () => {
     const cid = sel.value;
-    const detailsBox = $('#clientComptaDetails');
-    const listBox = $('#clientBookingsList');
-    const itemsContainer = $('#clientBookingsItems');
+    const totalsBox = $('#clientComptaDetails');
+    const accordionBox = $('#clientBookingsAccordion');
 
     if (cid && cid !== 'all') {
       const all = [...state.upcoming, ...state.past];
-      const bs = all.filter(b => String(b.client_id) === cid);
+      const clientBookings = all.filter(b => String(b.client_id) === cid);
 
       // Calcul des totaux
-      const total = bs.reduce((s,b)=>s+Number(b.total_chf||0),0);
-      const co = bs.reduce((s,b)=>s+Number(b.company_part_chf||0),0);
-      const emp = bs.reduce((s,b)=>s+Number(b.employee_part_chf||0),0);
+      const total = clientBookings.reduce((s,b)=>s+Number(b.total_chf||0),0);
+      const co = clientBookings.reduce((s,b)=>s+Number(b.company_part_chf||0),0);
+      const emp = clientBookings.reduce((s,b)=>s+Number(b.employee_part_chf||0),0);
 
       $('#cClientTotal').textContent = money(total);
       $('#cClientCo').textContent = money(co);
       $('#cClientEmp').textContent = money(emp);
 
-      detailsBox.style.display = 'flex';
-      listBox.style.display = 'block';
+      totalsBox.style.display = 'flex';
+      accordionBox.style.display = 'block';
 
-      // Affichage de la liste des réservations
-      let listHTML = '';
-      bs.forEach(b => {
-        listHTML += `
-          <div class="list-group-item bg-dark border-secondary text-white mb-2 rounded-3 p-3">
-            <div class="d-flex justify-content-between">
-              <div>
-                <div class="small text-secondary">${b.start_date} → ${b.end_date}</div>
-                <div>${b.prestations?.name || '—'}</div>
-                <div class="small text-muted">${b.slot === 'matin' ? '🌅 Matin' : b.slot === 'soir' ? '🌙 Soir' : '🌅🌙 Matin+soir'}</div>
+      // Group by date (comme Accueil)
+      const grouped = {};
+      clientBookings.forEach(b => {
+        const d = b.start_date || '0000-00-00';
+        if (!grouped[d]) grouped[d] = [];
+        grouped[d].push(b);
+      });
+
+      const days = Object.keys(grouped).sort();
+      let html = '';
+      days.forEach((day, i) => {
+        const items = grouped[day];
+        html += `
+          <div class="accordion-item">
+            <h2 class="accordion-header">
+              <button class="accordion-button ${i===0?'':'collapsed'}" type="button" data-bs-toggle="collapse" data-bs-target="#clientDay${day.replace(/-/g,'')}">
+                📅 ${day} <span class="badge bg-warning text-dark ms-3">${items.length}</span>
+              </button>
+            </h2>
+            <div id="clientDay${day.replace(/-/g,'')}" class="accordion-collapse collapse ${i===0?'show':''}">
+              <div class="accordion-body p-2">
+                ${items.map(b => `
+                  <div class="day-card p-3 mb-3">
+                    <div class="d-flex gap-3 align-items-start">
+                      <div style="font-size:3rem;">${b.pets?.animal_type==='chat'?'🐱':b.pets?.animal_type==='lapin'?'🐰':'🐾'}</div>
+                      <div class="flex-grow-1">
+                        <div class="fw-bold">${b.prestations?.name || '—'}</div>
+                        <div class="slot-pill d-inline-block mt-1">
+                          ${b.slot === 'matin' ? '🌅 Matin' : b.slot === 'soir' ? '🌙 Soir' : '🌅🌙 Matin + soir'}
+                        </div>
+                        <div class="small text-secondary mt-1">${b.start_date} → ${b.end_date}</div>
+                        ${b.pets?.name ? `<div class="small text-muted">🐾 ${b.pets.name}</div>` : ''}
+                        <div class="mt-2 fw-bold text-end">${money(b.total_chf)} CHF</div>
+                      </div>
+                    </div>
+                  </div>
+                `).join('')}
               </div>
-              <div class="text-end fw-bold">${money(b.total_chf)} CHF</div>
             </div>
           </div>`;
       });
 
-      itemsContainer.innerHTML = listHTML || '<div class="text-center py-3 text-secondary">Aucune réservation pour ce client</div>';
+      accordionBox.innerHTML = html || `<div class="text-center py-4 text-secondary">Aucune réservation pour ce client</div>`;
 
     } else {
-      detailsBox.style.display = 'none';
-      listBox.style.display = 'none';
+      totalsBox.style.display = 'none';
+      accordionBox.style.display = 'none';
     }
   };
 }
