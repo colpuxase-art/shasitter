@@ -161,7 +161,7 @@
     return a === 'chat' ? '🐱 Chat' : a === 'lapin' ? '🐰 Lapin' : '🐾 Autre';
   }
 
-  // ===================== RÉSERVATIONS (beau + export qui marche) =====================
+// ===================== RÉSERVATIONS (beau + export qui marche) =====================
 function renderBookings() {
   const cid = $('#bookingsClientFilter')?.value || 'all';
   let list = [...state.upcoming, ...state.past];
@@ -172,10 +172,14 @@ function renderBookings() {
   const past = list.filter(b => b.end_date < todayISO());
 
   $('#bookingsUpcoming').innerHTML = upcoming.map(bookingItem).join('') || 
-    '<div class="text-center py-5 text-secondary">Aucune réservation à venir</div>';
+    '
+Aucune réservation à venir
+';
 
   $('#bookingsPast').innerHTML = past.map(bookingItem).join('') || 
-    '<div class="text-center py-5 text-secondary">Aucune réservation passée</div>';
+    '
+Aucune réservation passée
+';
 }
 
 function bookingItem(b) {
@@ -183,24 +187,32 @@ function bookingItem(b) {
                       b.pets?.animal_type === 'lapin' ? '🐰' : '🐾';
 
   return `
-    <div class="card-soft p-3 mb-3" data-booking-id="${b.id}" style="cursor:pointer;">
-      <div class="d-flex gap-3 align-items-start justify-content-start"> <!-- FIX décalage : align-items-start + justify-content-start -->
-        <div style="font-size:3.2rem;flex-shrink:0;">${animalEmoji}</div>
-        <div class="flex-grow-1">
-          <div class="fw-bold fs-5">${b.clients?.name || '—'}</div>
-          <div class="fw-semibold">${b.prestations?.name || '—'}</div>
-          <div class="d-flex gap-2 mt-2 flex-wrap">
-            <span class="slot-pill">${b.slot === 'matin' ? '🌅 Matin' : b.slot === 'soir' ? '🌙 Soir' : '🌅🌙 Matin + soir'}</span>
-            <span class="text-secondary">${b.start_date} → ${b.end_date}</span>
-          </div>
-          ${b.pets?.name ? `<div class="small text-muted mt-1">🐾 ${b.pets.name}</div>` : ''}
-        </div>
-        <div class="text-end fw-bold fs-5">${money(b.total_chf)} CHF</div>
-      </div>
-    </div>`;
+    
+      
+ 
+        
+${animalEmoji}
+        
+          
+${b.clients?.name || '—'}
+          
+${b.prestations?.name || '—'}
+          
+            ${b.slot === 'matin' ? '🌅 Matin' : b.slot === 'soir' ? '🌙 Soir' : '🌅🌙 Matin + soir'}
+            ${b.start_date} → ${b.end_date}
+          
+          ${b.pets?.name ? `
+🐾 ${b.pets.name}
+` : ''}
+        
+        
+${money(b.total_chf)} CHF
+      
+    
+`;
 }
 
-// ===================== EXPORT .ICS (qui marche sur iPhone) =====================
+// ===================== EXPORT .ICS (fix pour iPhone avec fallback presse-papiers) =====================
 $('#bookingsExportAll').onclick = () => {
   const cid = $('#bookingsClientFilter')?.value || 'all';
   let list = [...state.upcoming, ...state.past];
@@ -213,12 +225,23 @@ $('#bookingsExportAll').onclick = () => {
   }
 
   const ics = buildICS(list);
+
+  // Essai d'ouverture direct
   const base64 = btoa(unescape(encodeURIComponent(ics)));
   const dataUrl = `data:text/calendar;charset=utf-8;base64,${base64}`;
 
   if (window.Telegram?.WebApp) {
-    window.Telegram.WebApp.openLink(dataUrl, { try_instant_view: true });
-    toast('📅 Ouverture dans Calendrier...');
+    try {
+      window.Telegram.WebApp.openLink(dataUrl, { try_instant_view: true });
+      toast('📅 Ouverture dans Calendrier...');
+    } catch(e) {
+      // Fallback presse-papiers si openLink échoue
+      navigator.clipboard.writeText(ics).then(() => {
+        toast('📋 ICS copié dans le presse-papiers ! Colle-le dans Notes et enregistre comme .ics pour ouvrir dans Google Agenda.');
+      }).catch(() => {
+        toast('Erreur, essaie de copier manuellement le texte ICS.');
+      });
+    }
   } else {
     const a = document.createElement('a');
     a.href = dataUrl;
@@ -258,6 +281,7 @@ function buildICS(bookings) {
   ics.push('END:VCALENDAR');
   return ics.join('\r\n');
 }
+
   // ===================== COMPTA - Groupé par Prestation =====================
 function renderCompta() {
   const c = state.compta || {};
