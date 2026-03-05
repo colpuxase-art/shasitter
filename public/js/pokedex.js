@@ -172,14 +172,10 @@ function renderBookings() {
   const past = list.filter(b => b.end_date < todayISO());
 
   $('#bookingsUpcoming').innerHTML = upcoming.map(bookingItem).join('') || 
-    '
-Aucune réservation à venir
-';
+    '<div class="text-center py-5 text-secondary">Aucune réservation à venir</div>';
 
   $('#bookingsPast').innerHTML = past.map(bookingItem).join('') || 
-    '
-Aucune réservation passée
-';
+    '<div class="text-center py-5 text-secondary">Aucune réservation passée</div>';
 }
 
 function bookingItem(b) {
@@ -187,32 +183,24 @@ function bookingItem(b) {
                       b.pets?.animal_type === 'lapin' ? '🐰' : '🐾';
 
   return `
-    
-      
- 
-        
-${animalEmoji}
-        
-          
-${b.clients?.name || '—'}
-          
-${b.prestations?.name || '—'}
-          
-            ${b.slot === 'matin' ? '🌅 Matin' : b.slot === 'soir' ? '🌙 Soir' : '🌅🌙 Matin + soir'}
-            ${b.start_date} → ${b.end_date}
-          
-          ${b.pets?.name ? `
-🐾 ${b.pets.name}
-` : ''}
-        
-        
-${money(b.total_chf)} CHF
-      
-    
-`;
+    <div class="card-soft p-3 mb-3" data-booking-id="${b.id}" style="cursor:pointer;">
+      <div class="d-flex gap-3 align-items-start justify-content-start"> <!-- FIX décalage : align-items-start + justify-content-start -->
+        <div style="font-size:3.2rem;flex-shrink:0;">${animalEmoji}</div>
+        <div class="flex-grow-1">
+          <div class="fw-bold fs-5">${b.clients?.name || '—'}</div>
+          <div class="fw-semibold">${b.prestations?.name || '—'}</div>
+          <div class="d-flex gap-2 mt-2 flex-wrap">
+            <span class="slot-pill">${b.slot === 'matin' ? '🌅 Matin' : b.slot === 'soir' ? '🌙 Soir' : '🌅🌙 Matin + soir'}</span>
+            <span class="text-secondary">${b.start_date} → ${b.end_date}</span>
+          </div>
+          ${b.pets?.name ? `<div class="small text-muted mt-1">🐾 ${b.pets.name}</div>` : ''}
+        </div>
+        <div class="text-end fw-bold fs-5">${money(b.total_chf)} CHF</div>
+      </div>
+    </div>`;
 }
 
-// ===================== EXPORT .ICS (fix pour iPhone avec fallback presse-papiers) =====================
+// ===================== EXPORT .ICS (solution clipboard pour iPhone) =====================
 $('#bookingsExportAll').onclick = () => {
   const cid = $('#bookingsClientFilter')?.value || 'all';
   let list = [...state.upcoming, ...state.past];
@@ -226,28 +214,12 @@ $('#bookingsExportAll').onclick = () => {
 
   const ics = buildICS(list);
 
-  // Essai d'ouverture direct
-  const base64 = btoa(unescape(encodeURIComponent(ics)));
-  const dataUrl = `data:text/calendar;charset=utf-8;base64,${base64}`;
-
-  if (window.Telegram?.WebApp) {
-    try {
-      window.Telegram.WebApp.openLink(dataUrl, { try_instant_view: true });
-      toast('📅 Ouverture dans Calendrier...');
-    } catch(e) {
-      // Fallback presse-papiers si openLink échoue
-      navigator.clipboard.writeText(ics).then(() => {
-        toast('📋 ICS copié dans le presse-papiers ! Colle-le dans Notes et enregistre comme .ics pour ouvrir dans Google Agenda.');
-      }).catch(() => {
-        toast('Erreur, essaie de copier manuellement le texte ICS.');
-      });
-    }
-  } else {
-    const a = document.createElement('a');
-    a.href = dataUrl;
-    a.download = 'shasitter-reservations.ics';
-    a.click();
-  }
+  navigator.clipboard.writeText(ics).then(() => {
+    toast('📋 ICS copié ! Colle-le dans Notes > Enregistre comme .ics > Ouvre dans Calendrier.');
+  }).catch(() => {
+    toast('Erreur clipboard. Copie manuellement le texte ICS.');
+    console.log(ics); // Pour test, affiche dans console
+  });
 };
 
 function buildICS(bookings) {
