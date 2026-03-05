@@ -184,7 +184,7 @@ function bookingItem(b) {
 
   return `
     <div class="card-soft p-3 mb-3" data-booking-id="${b.id}" style="cursor:pointer;">
-      <div class="d-flex gap-3">
+      <div class="d-flex gap-3 align-items-start justify-content-start"> <!-- FIX décalage : align-items-start + justify-content-start -->
         <div style="font-size:3.2rem;flex-shrink:0;">${animalEmoji}</div>
         <div class="flex-grow-1">
           <div class="fw-bold fs-5">${b.clients?.name || '—'}</div>
@@ -217,7 +217,7 @@ $('#bookingsExportAll').onclick = () => {
   const dataUrl = `data:text/calendar;charset=utf-8;base64,${base64}`;
 
   if (window.Telegram?.WebApp) {
-    window.Telegram.WebApp.openLink(dataUrl);
+    window.Telegram.WebApp.openLink(dataUrl, { try_instant_view: true });
     toast('📅 Ouverture dans Calendrier...');
   } else {
     const a = document.createElement('a');
