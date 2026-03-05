@@ -192,40 +192,66 @@
   }
 
   // ===================== COMPTA (fix sélection client) =====================
-  function renderCompta() {
-    const c = state.compta || {};
-    $('#comptaTotal').textContent = money(c.totalAll ?? c.total ?? 0);
-    $('#comptaCo').textContent = money(c.totalCompany ?? c.totalCo ?? 0);
-    $('#comptaEmp').textContent = money(c.totalEmployees ?? c.totalEmp ?? 0);
+  // ===================== COMPTA =====================
+function renderCompta() {
+  const c = state.compta || {};
+  $('#comptaTotal').textContent = money(c.totalAll ?? c.total ?? 0);
+  $('#comptaCo').textContent = money(c.totalCompany ?? c.totalCo ?? 0);
+  $('#comptaEmp').textContent = money(c.totalEmployees ?? c.totalEmp ?? 0);
 
-    const sel = $('#comptaClientFilter');
-    if (sel) {
-      sel.innerHTML = `<option value="all">Tous les clients</option>` +
-        state.clients.map(cl => `<option value="${cl.id}">${cl.name}</option>`).join('');
-    }
-
-    // Mise à jour immédiate quand on change le client
-    if (sel) {
-      sel.onchange = () => {
-        const cid = sel.value;
-        const detailsBox = $('#clientComptaDetails');
-        if (cid && cid !== 'all') {
-          const all = [...state.upcoming, ...state.past];
-          const bs = all.filter(b => String(b.client_id) === cid);
-          const total = bs.reduce((s,b)=>s+Number(b.total_chf||0),0);
-          const co = bs.reduce((s,b)=>s+Number(b.company_part_chf||0),0);
-          const emp = bs.reduce((s,b)=>s+Number(b.employee_part_chf||0),0);
-
-          $('#cClientTotal').textContent = money(total);
-          $('#cClientCo').textContent = money(co);
-          $('#cClientEmp').textContent = money(emp);
-          detailsBox.style.display = 'flex';
-        } else {
-          detailsBox.style.display = 'none';
-        }
-      };
-    }
+  const sel = $('#comptaClientFilter');
+  if (sel) {
+    sel.innerHTML = `<option value="all">Tous les clients</option>` +
+      state.clients.map(cl => `<option value="${cl.id}">${cl.name}</option>`).join('');
   }
+
+  // Quand on sélectionne un client
+  sel.onchange = () => {
+    const cid = sel.value;
+    const detailsBox = $('#clientComptaDetails');
+    const listBox = $('#clientBookingsList');
+    const itemsContainer = $('#clientBookingsItems');
+
+    if (cid && cid !== 'all') {
+      const all = [...state.upcoming, ...state.past];
+      const bs = all.filter(b => String(b.client_id) === cid);
+
+      // Calcul des totaux
+      const total = bs.reduce((s,b)=>s+Number(b.total_chf||0),0);
+      const co = bs.reduce((s,b)=>s+Number(b.company_part_chf||0),0);
+      const emp = bs.reduce((s,b)=>s+Number(b.employee_part_chf||0),0);
+
+      $('#cClientTotal').textContent = money(total);
+      $('#cClientCo').textContent = money(co);
+      $('#cClientEmp').textContent = money(emp);
+
+      detailsBox.style.display = 'flex';
+      listBox.style.display = 'block';
+
+      // Affichage de la liste des réservations
+      let listHTML = '';
+      bs.forEach(b => {
+        listHTML += `
+          <div class="list-group-item bg-dark border-secondary text-white mb-2 rounded-3 p-3">
+            <div class="d-flex justify-content-between">
+              <div>
+                <div class="small text-secondary">${b.start_date} → ${b.end_date}</div>
+                <div>${b.prestations?.name || '—'}</div>
+                <div class="small text-muted">${b.slot === 'matin' ? '🌅 Matin' : b.slot === 'soir' ? '🌙 Soir' : '🌅🌙 Matin+soir'}</div>
+              </div>
+              <div class="text-end fw-bold">${money(b.total_chf)} CHF</div>
+            </div>
+          </div>`;
+      });
+
+      itemsContainer.innerHTML = listHTML || '<div class="text-center py-3 text-secondary">Aucune réservation pour ce client</div>';
+
+    } else {
+      detailsBox.style.display = 'none';
+      listBox.style.display = 'none';
+    }
+  };
+}
 
   // ===================== EVENTS =====================
   function wireEvents() {
